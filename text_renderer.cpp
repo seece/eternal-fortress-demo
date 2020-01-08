@@ -234,7 +234,11 @@ HRESULT TextRenderer::GetPixelsPerDip(void*, float* pixelsPerDip) {
 	ID2D1Factory* d2dfactory;
 	D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &d2dfactory);
 	d2dfactory->ReloadSystemMetrics();
+	#if 1
+	*pixelsPerDip = 1;
+	#else
 	*pixelsPerDip = float(GetDpiForWindow(wnd)) / 96.f;
+	#endif
 	d2dfactory->Release();
 	return S_OK;
 }
