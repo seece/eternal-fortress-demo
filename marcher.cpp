@@ -61,6 +61,9 @@ int main() {
 					return float((rndseed.xyz = rndseed.yzx).x) / pow(2., 32.);
 				}
 
+				const int MATERIAL_SKY = 0;
+				const int MATERIAL_OTHER = 1;
+
 				// uniform variables are global from the glsl perspective; you set them in the CPU side and every thread gets the same value
 				uniform int source;
 				uniform int frame;
@@ -71,14 +74,59 @@ int main() {
 					return vec2(id.xy) / 1024.0;
 				}
 
+				float scene(vec3 p, out int material) {
+					material = MATERIAL_OTHER;
+					return length(p) - 1.;
+				}
+
+				vec3 evalnormal(vec3 p) {
+					vec2 e=vec2(1e-5, 0.f);
+					int m;
+					return normalize(vec3(
+							scene(p + e.xyy,m) - scene(p - e.xyy,m),
+							scene(p + e.yxy,m) - scene(p - e.yxy,m),
+							scene(p + e.yyx,m) - scene(p - e.yyx,m)
+							));
+				}
+
 				void main() {
 					// seed with seeds that change at different time offsets (not crucial to the algorithm but yields nicer results)
 					srand(1u, uint(gl_GlobalInvocationID.x / 4) + 1u, uint(gl_GlobalInvocationID.y / 4) + 1u);
 					srand(uint((rand())) + uint(frame/100), uint(gl_GlobalInvocationID.x / 4) + 1u, uint(gl_GlobalInvocationID.y / 4) + 1u);
 
 					vec2 uv = getThreadUV(gl_GlobalInvocationID);
-					vec4 color = vec4(uv, 0., 1.0);
-					imageStore(state, ivec3(gl_GlobalInvocationID.xy, 1 - source), color);
+
+					vec3 p = vec3(uv - vec2(.5, .5), -1.);
+					vec3 dir = normalize(p);
+					vec3 campos = vec3(0., 0., 5.);
+					p += campos;
+
+					int hitmat = MATERIAL_SKY;
+					int i;
+
+					for (i=0;i<100;i++) {
+						int mat;
+						float d = scene(p, mat);
+						if (d < 1e-5) {
+							hitmat = mat;
+							break;
+						}
+						p += d * dir;
+					}
+
+					vec3 color;
+
+					switch (hitmat) {
+						case MATERIAL_SKY:
+							color = vec3(0., 0.2*abs(dir.y), 0.5 - dir.y);
+							break;
+						case MATERIAL_OTHER:
+							vec3 normal = evalnormal(p);
+							color = vec3(.5)+.5*normal;
+							break;
+					}
+
+					imageStore(state, ivec3(gl_GlobalInvocationID.xy, 1 - source), vec4(color, 1.));
 				}
 				));
 
