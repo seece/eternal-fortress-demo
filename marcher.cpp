@@ -74,9 +74,34 @@ int main() {
 					return vec2(id.xy) / 1024.0;
 				}
 
+				
+	
+	
+				// mandelbox distance function by Rrola (Buddhi's distance estimation)
+				// http://www.fractalforums.com/index.php?topic=2785.msg21412#msg21412
+
+				float mandelbox(vec3 position) {
+					// precomputed somewhere
+					const float SCALE = 2.7;
+					const float MR2 = 0.5;
+					const int iters = 7;
+					vec4 scalevec = vec4(SCALE, SCALE, SCALE, abs(SCALE)) / MR2;
+					float C1 = abs(SCALE-1.0), C2 = pow(abs(SCALE), float(1-iters));
+
+					// distance estimate
+					vec4 p = vec4(position.xyz, 1.0), p0 = vec4(position.xyz, 1.0);  // p.w is knighty's DEfactor
+					for (int i=0; i<iters; i++) {
+						p.xyz = clamp(p.xyz, -1.0, 1.0) * 2.0 - p.xyz;  // box fold: min3, max3, mad3
+						float r2 = dot(p.xyz, p.xyz);  // dp3
+						p.xyzw *= clamp(max(MR2/r2, MR2), 0.0, 1.0);  // sphere fold: div1, max1.sat, mul4
+						p.xyzw = p*scalevec + p0;  // mad4
+					}
+					return (length(p.xyz) - C1) / p.w - C2;
+				}
+
 				float scene(vec3 p, out int material) {
 					material = MATERIAL_OTHER;
-					return length(p) - 1.;
+					return mandelbox(p);
 				}
 
 				vec3 evalnormal(vec3 p) {
@@ -89,17 +114,44 @@ int main() {
 							));
 				}
 
+				struct CameraParams {
+					vec3 pos;
+					vec3 dir;
+					float zoom;
+				};
+
+				void cameraPath(float t, out CameraParams cam)
+				{
+					float tt = t*0.2;
+					cam.pos = vec3(0.5*sin(tt), 0., 3. + 0.5*cos(tt));
+					cam.dir = normalize(vec3(0.5*cos(tt*0.5), 0.2*sin(tt), -1.));
+					cam.zoom = 1.;
+				}
+
+				void getCameraProjection(CameraParams cam, vec2 uv, out vec3 outPos, out vec3 outDir) {
+					uv /= cam.zoom;
+					vec3 right = cross(cam.dir, vec3(0., 1., 0.));
+					vec3 up = cross(cam.dir, right);
+					outPos = cam.pos + cam.dir + (uv.x - 0.5) * right + (uv.y - 0.5) * up;
+					outDir = normalize(outPos - cam.pos);
+				}
+
 				void main() {
 					// seed with seeds that change at different time offsets (not crucial to the algorithm but yields nicer results)
 					srand(1u, uint(gl_GlobalInvocationID.x / 4) + 1u, uint(gl_GlobalInvocationID.y / 4) + 1u);
 					srand(uint((rand())) + uint(frame/100), uint(gl_GlobalInvocationID.x / 4) + 1u, uint(gl_GlobalInvocationID.y / 4) + 1u);
 
 					vec2 uv = getThreadUV(gl_GlobalInvocationID);
+					float secs = frame / 60.;
 
-					vec3 p = vec3(uv - vec2(.5, .5), -1.);
-					vec3 dir = normalize(p);
-					vec3 campos = vec3(0., 0., 5.);
-					p += campos;
+
+					CameraParams cam;
+					cameraPath(secs, cam);
+					vec3 p; // = vec3(uv - vec2(.5, .5), -1.);
+					vec3 dir;// = normalize(p);
+					getCameraProjection(cam, uv, p, dir);
+
+					p += cam.pos;
 
 					int hitmat = MATERIAL_SKY;
 					int i;
@@ -122,7 +174,10 @@ int main() {
 							break;
 						case MATERIAL_OTHER:
 							vec3 normal = evalnormal(p);
-							color = vec3(.5)+.5*normal;
+							vec3 to_camera = normalize(cam.pos - p);
+							float shine = 0.5+0.5*dot(normal, to_camera);
+							shine = pow(shine, 8.);
+							color = vec3(shine);
 							break;
 					}
 
@@ -165,6 +220,8 @@ int main() {
 					uniform sampler2DArray state;
 					out vec4 col;
 					uniform int layer;
+
+
 					void main() {
 						col = vec4(texelFetch(state, ivec3(gl_FragCoord.xy, layer), 0).xyz, 1.0);
 						//col = vec4(1., 0., 0., 1.);
