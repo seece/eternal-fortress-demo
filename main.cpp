@@ -16,7 +16,7 @@
 
 const int screenw = 1024, screenh = 1024;
 
-int main() {
+int oldmain() {
 
 	// create window and context. can also do fullscreen and non-visible window for compute only
 	OpenGL context(screenw, screenh, "example");
@@ -111,7 +111,7 @@ int main() {
 					float alpha = 11.9 * (.98 + .04 * rand()), beta = ext*15.4 * (.98 + .04 * rand());
 					// try uncommenting these to (pretty much) recreate figure 2 from https://www.researchgate.net/publication/220494187_Advanced_Reaction-Diffusion_Models_for_Texture_Synthesis
 					// also see the related color scheme in the draw shader!
-					//alpha = mix(8., 20., float(gl_GlobalInvocationID.x) / 1023.) * (.99 + .02 * rand()); beta = mix(8., 20., float(gl_GlobalInvocationID.y) / 1023.) * (.99 + .02 * rand());
+					alpha = mix(8., 20., float(gl_GlobalInvocationID.x) / 1023.) * (.99 + .02 * rand()); beta = mix(8., 20., float(gl_GlobalInvocationID.y) / 1023.) * (.99 + .02 * rand());
 					// compute reaction velocity; how the concentrations of the components change
 					vec2 vel = 
 						vec2(diff.x / 32. + (prev.x * (prev.y - 1.) - alpha) * s,
