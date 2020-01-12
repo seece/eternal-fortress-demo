@@ -29,13 +29,24 @@ const int MATERIAL_OTHER = 1;
 // uniform variables are global from the glsl perspective; you set them in the CPU side and every thread gets the same value
 uniform int source;
 uniform int frame;
+uniform float secs;
 
 layout(rgba32f) uniform image2D gbuffer;
+
+struct CameraParams {
+	vec3 pos;
+	float p0;
+	vec3 dir;
+	float zoom;
+};
+
+layout(std140) uniform cameraArray {
+	CameraParams cameras[2];
+};
 
 vec2 getThreadUV(uvec3 id) {
 	return vec2(id.xy) / 1024.0;
 }
-
 
 // mandelbox distance function by Rrola (Buddhi's distance estimation)
 // http://www.fractalforums.com/index.php?topic=2785.msg21412#msg21412
@@ -74,20 +85,6 @@ vec3 evalnormal(vec3 p) {
 				));
 }
 
-struct CameraParams {
-	vec3 pos;
-	vec3 dir;
-	float zoom;
-};
-
-void cameraPath(float t, out CameraParams cam)
-{
-	float tt = t*0.2;
-	cam.pos = vec3(0.5*sin(tt), 0., 3. + 0.5*cos(tt));
-	cam.dir = normalize(vec3(0.5*cos(tt*0.5), 0.2*sin(tt), -1.));
-	cam.zoom = 1.;
-}
-
 void getCameraProjection(CameraParams cam, vec2 uv, out vec3 outPos, out vec3 outDir) {
 	uv /= cam.zoom;
 	vec3 right = cross(cam.dir, vec3(0., 1., 0.));
@@ -102,11 +99,8 @@ void main() {
 	srand(uint((rand())) + uint(frame/100), uint(gl_GlobalInvocationID.x / 4) + 1u, uint(gl_GlobalInvocationID.y / 4) + 1u);
 
 	vec2 uv = getThreadUV(gl_GlobalInvocationID);
-	float secs = frame / 60.;
 
-
-	CameraParams cam;
-	cameraPath(secs, cam);
+	CameraParams cam = cameras[1];
 	vec3 p; // = vec3(uv - vec2(.5, .5), -1.);
 	vec3 dir;// = normalize(p);
 	getCameraProjection(cam, uv, p, dir);

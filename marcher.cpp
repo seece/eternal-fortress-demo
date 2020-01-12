@@ -1,7 +1,24 @@
 
 #include "testbench.h"
 
+
+struct CameraParameters {
+	vec3 pos;
+	float padding;
+	vec3 dir;
+	float zoom;
+};
+
 const int screenw = 1024, screenh = 1024;
+
+void cameraPath(float t, CameraParameters& cam)
+{
+	float tt = t * 0.2f;
+	cam.pos = vec3(0.5f*sin(tt), 0.f, 3.f + 0.5f*cos(tt));
+	cam.dir = normalize(vec3(0.5f*cos(tt*0.5f), 0.2f*sin(tt), -1.f));
+	cam.zoom = 1.f;
+}
+
 
 int main() {
 
@@ -15,29 +32,27 @@ int main() {
 	// do that at the callsite (so input/output declarations are close to the bind code)
 	Program march, draw;
 
-	// this variable simply makes a scope-safe GL object so glCreateTexture is called here
-	// and glDeleteTexture on scope exit; different types exist. gl_helpers.h contains more
-	// helpers like this for buffers, renderbuffers and framebuffers.
-	Texture<GL_TEXTURE_2D_ARRAY> state;
 	Texture<GL_TEXTURE_2D_ARRAY> abuffer;
 	Texture<GL_TEXTURE_2D> gbuffer;
+	Buffer cameraData;
 
 	int renderw = screenw, renderh = screenh;
 
 	glTextureStorage3D(abuffer, 1, GL_RGBA32F, screenw, screenh, 2);
 	glTextureStorage2D(gbuffer, 1, GL_RGBA32F, renderw, renderh);
 
-	glTextureStorage3D(state, 1, GL_RGBA32F, screenw, screenh, 3);
-
-	// we're rendering from one image to the other and then back in a 'ping-pong' fashion; source keeps track of 
-	// which image is the source and which is the target.
 	int abuffer_read_layer = 0, frame = 0;
+	CameraParameters cameras[2] = {};
+	glNamedBufferStorage(cameraData, sizeof(cameras), NULL, GL_DYNAMIC_STORAGE_BIT);
+
 
 	while (loop()) // loop() stops if esc pressed or window closed
 	{
-		
 		// timestamp objects make gl queries at those locations; you can substract them to get the time
 		TimeStamp start;
+		float secs = frame / 60.f;
+		cameraPath(secs, cameras[1]);
+		glNamedBufferSubData(cameraData, 0, sizeof(cameras), &cameras);
 
 		if (!march)
 			march = createProgram("shaders/marcher.glsl");
@@ -45,6 +60,8 @@ int main() {
 		glUseProgram(march);
 	
 		glUniform1i("frame", frame);
+		glUniform1f("secs", secs);
+		bindBuffer("cameraArray", cameraData);
 		// .. this includes images
 		bindImage("gbuffer", 0, gbuffer, GL_WRITE_ONLY, GL_RGBA32F);
 		// the arguments of dispatch are the numbers of thread blocks in each direction;
@@ -57,7 +74,7 @@ int main() {
 		// to place the correct barriers when writing from compute shaders and reading in subsequent shaders)
 		glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 
-		// flip the ping-pongt flag
+		// flip the ping-pong flag
 		abuffer_read_layer = 1 - abuffer_read_layer;
 
 		if (!draw)
@@ -72,18 +89,46 @@ int main() {
 				),
 				"", "", "",
 					GLSL(460,
+					struct CameraParams {
+						vec3 pos;
+						float p0;
+						vec3 dir;
+						float zoom;
+					};
+
+					layout(std140) uniform cameraArray {
+						CameraParams cameras[2];
+					};
+
+					void getCameraProjection(CameraParams cam, vec2 uv, out vec3 outPos, out vec3 outDir) {
+						uv /= cam.zoom;
+						vec3 right = cross(cam.dir, vec3(0., 1., 0.));
+						vec3 up = cross(cam.dir, right);
+						outPos = cam.pos + cam.dir + (uv.x - 0.5) * right + (uv.y - 0.5) * up;
+						outDir = normalize(outPos - cam.pos);
+					}
+
 					uniform sampler2D gbuffer;
 					uniform sampler2DArray abuffer;
 					layout(rgba32f) uniform image2DArray abuffer_image;
 					out vec4 col;
 					uniform int abuffer_read_layer;
+					uniform int frame;
 
 					void main() {
 						vec4 c0 = texelFetch(abuffer, ivec3(gl_FragCoord.xy, abuffer_read_layer), 0);
 						vec4 c1 = texelFetch(gbuffer, ivec2(gl_FragCoord.xy), 0);
 
+						vec3 rayStartPos, rayDir;
+						vec2 uv = vec2(gl_FragCoord.xy) / 1024.;
+						getCameraProjection(cameras[1], uv, rayStartPos, rayDir);
+						vec3 world = cameras[1].pos + rayDir * c1.w;
+
 						float alpha = 0.8;
-						vec3 c = alpha * c0.xyz + (1 - alpha) * c1.xyz;
+						if (frame == 0) alpha = 0.;
+
+						//vec3 c = alpha * c0.xyz + (1 - alpha) * c1.xyz;
+						vec3 c = vec3(0.5) + 0.5*sin(world*100.);
 						imageStore(abuffer_image, ivec3(gl_FragCoord.xy, 1 - abuffer_read_layer), vec4(c, c1.w));
 						col = vec4(c, 1.);
 						//col = vec4(vec3(.5)+.5*sin(50*vec3(c1.w)), 1.0);
@@ -92,13 +137,14 @@ int main() {
 			);
 
 		glUseProgram(draw);
-		// textures are also a oneliner to bind (same for buffers; no bindings have to be states in the shader!)
-		// note that this relies on the shader loader setting their values beforehand; if you use your own shader
-		// loader, you'll have to replicate this (see how assignUnits() is used in program.cpp)
+
 		bindTexture("gbuffer", gbuffer);
 		bindTexture("abuffer", abuffer);
 		bindImage("abuffer_image", 0, abuffer, GL_WRITE_ONLY, GL_RGBA32F);
 		glUniform1i("abuffer_read_layer", abuffer_read_layer);
+		glUniform1i("frame", frame);
+		glUniform1f("secs", secs);
+		bindBuffer("cameraArray", cameraData);
 		glDrawArrays(GL_TRIANGLES, 0, 3);
 
 		// here we're just using two timestamps, but you could of course measure intermediate timings as well
@@ -109,6 +155,8 @@ int main() {
 
 		// this actually displays the rendered image
 		swapBuffers();
+
+		std::swap(cameras[0], cameras[1]);
 		frame++;
 	}
 	return 0;
