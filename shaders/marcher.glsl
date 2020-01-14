@@ -34,10 +34,14 @@ uniform float secs;
 layout(rgba32f) uniform image2D gbuffer;
 
 struct CameraParams {
-	vec3 pos;
-	float p0;
+    vec3 pos;
+	float padding;
 	vec3 dir;
 	float zoom;
+	vec3 up;
+	float padding2;
+	vec3 right;
+	float padding3;
 };
 
 layout(std140) uniform cameraArray {
@@ -87,9 +91,9 @@ vec3 evalnormal(vec3 p) {
 
 void getCameraProjection(CameraParams cam, vec2 uv, out vec3 outPos, out vec3 outDir) {
 	uv /= cam.zoom;
-	vec3 right = cross(cam.dir, vec3(0., 1., 0.));
-	vec3 up = cross(cam.dir, right);
-	outPos = cam.pos + cam.dir + (uv.x - 0.5) * right + (uv.y - 0.5) * up;
+	// vec3 right = cross(cam.dir, vec3(0., 1., 0.));
+	// vec3 up = cross(cam.dir, right);
+	outPos = cam.pos + cam.dir + (uv.x - 0.5) * cam.right + (uv.y - 0.5) * cam.up;
 	outDir = normalize(outPos - cam.pos);
 }
 
@@ -104,8 +108,6 @@ void main() {
 	vec3 p; // = vec3(uv - vec2(.5, .5), -1.);
 	vec3 dir;// = normalize(p);
 	getCameraProjection(cam, uv, p, dir);
-
-	p += cam.pos;
 
 	int hitmat = MATERIAL_SKY;
 	int i;
@@ -132,7 +134,8 @@ void main() {
 
 			vec3 normal = evalnormal(p);
 			vec3 to_camera = normalize(cam.pos - p);
-			float shine = 0.5+0.5*dot(normal, to_camera);
+            vec3 to_light = normalize(vec3(-0.5, -1.0, 0.7));
+			float shine = 0.5+0.5*dot(normal, to_light);
 			shine = pow(shine, 8.);
 			color = vec3(shine);
 			break;
