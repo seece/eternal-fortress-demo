@@ -7,6 +7,10 @@ struct CameraParameters {
 	float padding;
 	vec3 dir;
 	float zoom;
+	vec3 up;
+	float padding2;
+	vec3 right;
+	float padding3;
 };
 
 const int screenw = 1024, screenh = 1024;
@@ -17,6 +21,8 @@ void cameraPath(float t, CameraParameters& cam)
 	cam.pos = vec3(0.5f*sin(tt), 0.f, 3.f + 0.5f*cos(tt));
 	cam.dir = normalize(vec3(0.5f*cos(tt*0.5f), 0.2f*sin(tt), -1.f));
 	cam.zoom = 1.f;
+	cam.right = normalize(cross(cam.dir, vec3(0.f, 1.f, 0.f)));
+	cam.up = cross(cam.dir, cam.right);
 }
 
 
@@ -91,9 +97,13 @@ int main() {
 					GLSL(460,
 					struct CameraParams {
 						vec3 pos;
-						float p0;
+						float padding;
 						vec3 dir;
 						float zoom;
+						vec3 up;
+						float padding2;
+						vec3 right;
+						float padding3;
 					};
 
 					layout(std140) uniform cameraArray {
@@ -102,11 +112,22 @@ int main() {
 
 					void getCameraProjection(CameraParams cam, vec2 uv, out vec3 outPos, out vec3 outDir) {
 						uv /= cam.zoom;
-						vec3 right = cross(cam.dir, vec3(0., 1., 0.));
-						vec3 up = cross(cam.dir, right);
-						outPos = cam.pos + cam.dir + (uv.x - 0.5) * right + (uv.y - 0.5) * up;
+						// vec3 right = cross(cam.dir, vec3(0., 1., 0.));
+						// vec3 up = cross(cam.dir, right);
+						outPos = cam.pos + cam.dir + (uv.x - 0.5) * cam.right + (uv.y - 0.5) * cam.up;
 						outDir = normalize(outPos - cam.pos);
 					}
+
+
+					vec2 reprojectPoint(CameraParams cam, vec3 p) {
+						vec3 op = p - cam.pos;
+						float dist = dot(cam.dir, op);
+						vec3 pp = op / dist;
+						vec2 plane = vec2(dot(cam.right, pp), dot(cam.up, pp));
+						return cam.zoom * (plane + vec2(0.5));
+					}
+
+					// TODO reverse projection back to "UV"
 
 					uniform sampler2D gbuffer;
 					uniform sampler2DArray abuffer;
@@ -124,11 +145,15 @@ int main() {
 						getCameraProjection(cameras[1], uv, rayStartPos, rayDir);
 						vec3 world = cameras[1].pos + rayDir * c1.w;
 
+						vec2 uvProj = reprojectPoint(cameras[1], world);
+
 						float alpha = 0.8;
 						if (frame == 0) alpha = 0.;
 
 						//vec3 c = alpha * c0.xyz + (1 - alpha) * c1.xyz;
-						vec3 c = vec3(0.5) + 0.5*sin(world*100.);
+						//vec3 c = vec3(0.5) + 0.5*sin(world*100.);
+						float err = length(uv - uvProj);
+						vec3 c = vec3(uvProj, 0.);
 						imageStore(abuffer_image, ivec3(gl_FragCoord.xy, 1 - abuffer_read_layer), vec4(c, c1.w));
 						col = vec4(c, 1.);
 						//col = vec4(vec3(.5)+.5*sin(50*vec3(c1.w)), 1.0);
