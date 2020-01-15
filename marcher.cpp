@@ -126,6 +126,10 @@ int main() {
 						return cam.zoom * (plane + vec2(0.5));
 					}
 
+					float rgb2Luminance(vec3 rgb) {
+						return dot(rgb, vec3(0.2126, 0.7152, 0.0722));
+					}
+
 					uniform sampler2D gbuffer;
 					uniform sampler2DArray abuffer;
 					layout(rgba32f) uniform image2DArray abuffer_image;
@@ -140,24 +144,27 @@ int main() {
 						vec2 uv1 = vec2(gl_FragCoord.xy) / 1024.;
 						getCameraProjection(cameras[1], uv1, rayStartPos1, rayDir1);
 						vec3 world1 = cameras[1].pos + rayDir1 * c1.w;
-						vec2 uv0 = reprojectPoint(cameras[0], world1);
 
-						//vec4 c0 = texelFetch(abuffer, ivec3(vec2(0.5) + uv0 * textureSize(abuffer, 0).xy, abuffer_read_layer), 0);
+						vec2 uv0 = reprojectPoint(cameras[0], world1);
+						//float z0 = texelFetch(abuffer, ivec3(uv0 * textureSize(abuffer, 0).xy, abuffer_read_layer), 0).w;
 						vec4 c0 = texture(abuffer, vec3(uv0, 0.));
 						vec3 rayStartPos0, rayDir0;
 						getCameraProjection(cameras[0], uv0, rayStartPos0, rayDir0);
-						vec3 world0 = cameras[0].pos + rayDir0 * c0.w;
+						//vec3 world0 = cameras[0].pos + rayDir0 * z0;
+						
+						//if (c1.w != 1e10 && length(world0 - world1) > 1e-1) alpha = 0.;
 
-						if (frame % 240 == 0 && length(uv1-vec2(0.5,0.5)) < 0.25) {
-							c0.rgb = vec3(0.5)+0.5*sin(world1*100.);
-						}
+						// feedback weight from unbiased luminance diff (t.lottes)
+						// https://github.com/playdeadgames/temporal/blob/4795aa0007d464371abe60b7b28a1cf893a4e349/Assets/Shaders/TemporalReprojection.shader#L313
 
-						float alpha = 0.95;
-						if (frame == 0) alpha = 0.;
-						if (c1.w == 1e10) alpha = 0.;
-						if (c1.w != 1e10 && length(world0 - world1) > 1e-1) alpha = 0.;
+						float lum0 = rgb2Luminance(c0.rgb); // last frame's
+						float lum1 = rgb2Luminance(c1.rgb); // this frame's
+						float unbiased_diff = abs(lum0 - lum1) / max(lum0, max(lum1, 0.2));
+						float unbiased_weight = 1.0 - unbiased_diff;
+						float unbiased_weight_sqr = unbiased_weight * unbiased_weight;
+						float feedback = mix(0., 1.0, unbiased_weight_sqr);
 
-						vec3 c = alpha * c0.xyz + (1 - alpha) * c1.xyz;
+						vec3 c = feedback * c0.xyz + (1 - feedback) * c1.xyz;
 						//if (c1.w != 1e10 && length(world0 - world1) > 2e-1) c=vec3(1.,0.,0.);
 						//c = vec3(0.5) + 0.5*sin((world0 - world1)*100.);
 						imageStore(abuffer_image, ivec3(gl_FragCoord.xy, 1 - abuffer_read_layer), vec4(c, c1.w));
