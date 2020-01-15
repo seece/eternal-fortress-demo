@@ -112,7 +112,7 @@ void main() {
 	int hitmat = MATERIAL_SKY;
 	int i;
 
-	for (i=0;i<100;i++) {
+	for (i=0;i<500;i++) {
 		int mat;
 		float d = scene(p, mat);
 		if (d < 1e-5) {
@@ -136,7 +136,7 @@ void main() {
 			vec3 to_camera = normalize(cam.pos - p);
             vec3 to_light = normalize(vec3(-0.5, -1.0, 0.7));
 			float shine = 0.5+0.5*dot(normal, to_light);
-			shine = pow(shine, 8.);
+			shine = pow(shine, 6.);
 			color = vec3(shine);
 			break;
 	}

@@ -134,31 +134,32 @@ int main() {
 					uniform int frame;
 
 					void main() {
-
 						vec4 c1 = texelFetch(gbuffer, ivec2(gl_FragCoord.xy), 0);
 
-						vec3 rayStartPos, rayDir;
-						vec2 uv = vec2(gl_FragCoord.xy) / 1024.;
-						getCameraProjection(cameras[1], uv, rayStartPos, rayDir);
-						vec3 world1 = cameras[1].pos + rayDir * c1.w;
-						vec2 uvProj = reprojectPoint(cameras[0], world1);
+						vec3 rayStartPos1, rayDir1;
+						vec2 uv1 = vec2(gl_FragCoord.xy) / 1024.;
+						getCameraProjection(cameras[1], uv1, rayStartPos1, rayDir1);
+						vec3 world1 = cameras[1].pos + rayDir1 * c1.w;
+						vec2 uv0 = reprojectPoint(cameras[0], world1);
 
-						//vec4 c0 = texelFetch(abuffer, ivec3(vec2(0.5)+uvProj * textureSize(abuffer, 0).xy, abuffer_read_layer), 0);
-						vec4 c0 = texture(abuffer, vec3(uvProj, 0.));
+						//vec4 c0 = texelFetch(abuffer, ivec3(vec2(0.5) + uv0 * textureSize(abuffer, 0).xy, abuffer_read_layer), 0);
+						vec4 c0 = texture(abuffer, vec3(uv0, 0.));
 						vec3 rayStartPos0, rayDir0;
-						getCameraProjection(cameras[0], uv, rayStartPos0, rayDir0);
+						getCameraProjection(cameras[0], uv0, rayStartPos0, rayDir0);
 						vec3 world0 = cameras[0].pos + rayDir0 * c0.w;
 
-						float alpha = 0.8;
+						if (frame % 240 == 0 && length(uv1-vec2(0.5,0.5)) < 0.25) {
+							c0.rgb = vec3(0.5)+0.5*sin(world1*100.);
+						}
+
+						float alpha = 0.95;
 						if (frame == 0) alpha = 0.;
 						if (c1.w == 1e10) alpha = 0.;
-						if (c1.w != 1e10 && length(world0 - world1) > 1e-2) alpha = 0.;
+						if (c1.w != 1e10 && length(world0 - world1) > 1e-1) alpha = 0.;
 
 						vec3 c = alpha * c0.xyz + (1 - alpha) * c1.xyz;
+						//if (c1.w != 1e10 && length(world0 - world1) > 2e-1) c=vec3(1.,0.,0.);
 						//c = vec3(0.5) + 0.5*sin((world0 - world1)*100.);
-						
-
-						float err = length(uv - uvProj);
 						imageStore(abuffer_image, ivec3(gl_FragCoord.xy, 1 - abuffer_read_layer), vec4(c, c1.w));
 						col = vec4(c, 1.);
 						//col = vec4(vec3(.5)+.5*sin(50*vec3(c1.w)), 1.0);
