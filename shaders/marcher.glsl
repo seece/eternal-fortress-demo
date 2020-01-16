@@ -31,7 +31,6 @@ uniform int source;
 uniform int frame;
 uniform float secs;
 
-layout(rgba32f) uniform image2D gbuffer;
 layout(r32f) uniform image2D zbuffer;
 layout(rgba16f) uniform image2DArray samplebuffer;
 
@@ -122,15 +121,15 @@ void main() {
     seed = uint(rand()*9999 + frame);
 
     int samplesPerPixel = imageSize(samplebuffer).z;
-    float depth;
-    vec3 accum=vec3(0.);
+    float minDepth = 1e20;
+    vec3 accum = vec3(0.);
 
     for (int sample_id=0; sample_id < samplesPerPixel; sample_id++)
     {
         vec2 jitter = vec2(rand(), rand()) - vec2(0.5, 0.5);
 
         vec2 uv = getThreadUV(gl_GlobalInvocationID);
-        jitter /= imageSize(gbuffer).xy;
+        jitter /= imageSize(zbuffer).xy;
         uv += jitter;
 
         CameraParams cam = cameras[1];
@@ -140,7 +139,7 @@ void main() {
         int hitmat = MATERIAL_SKY;
         int i;
 
-        for (i=0;i<500;i++) {
+        for (i=0;i<300;i++) {
             int mat;
             float d = scene(p, mat);
             if (d < 1e-5) {
@@ -152,7 +151,7 @@ void main() {
 
         vec3 color;
 
-        depth = 1e10;
+        float depth = 1e10;
         switch (hitmat) {
             case MATERIAL_SKY:
                 color = vec3(0., 0.2*abs(dir.y), 0.5 - dir.y);
@@ -169,14 +168,12 @@ void main() {
                 break;
         }
 
-        accum+=color;
+        accum += color;
+        minDepth = min(minDepth, depth);
 
         imageStore(samplebuffer, ivec3(gl_GlobalInvocationID.xy, sample_id), vec4(color, packJitter(jitter)));
     }
 
-    // TODO remove this write (removing it increases frametime?)
-    imageStore(gbuffer, ivec2(gl_GlobalInvocationID.xy), vec4(accum / samplesPerPixel, 0.));
-    // hack: we write only the last z value to the buffer
-    imageStore(zbuffer, ivec2(gl_GlobalInvocationID.xy), vec4(depth));
+    imageStore(zbuffer, ivec2(gl_GlobalInvocationID.xy), vec4(minDepth));
 }
 
