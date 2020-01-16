@@ -14,6 +14,8 @@ struct CameraParameters {
 };
 
 const int screenw = 1024, screenh = 1024;
+static constexpr int SAMPLES_PER_PIXEL = 2;
+static constexpr GLuint SAMPLE_BUFFER_TYPE = GL_RGBA16F;
 
 void cameraPath(float t, CameraParameters& cam)
 {
@@ -36,16 +38,20 @@ int main() {
 
 	// shader variables; could also initialize them here, but it's often a good idea to
 	// do that at the callsite (so input/output declarations are close to the bind code)
-	Program march, draw;
+	Program march, draw, sampleResolve;
 
 	Texture<GL_TEXTURE_2D_ARRAY> abuffer;
 	Texture<GL_TEXTURE_2D> gbuffer;
+	Texture<GL_TEXTURE_2D> zbuffer;
+	Texture<GL_TEXTURE_2D_ARRAY> samplebuffer;
 	Buffer cameraData;
 
 	int renderw = screenw, renderh = screenh;
 
 	glTextureStorage3D(abuffer, 1, GL_RGBA32F, screenw, screenh, 2);
 	glTextureStorage2D(gbuffer, 1, GL_RGBA32F, renderw, renderh);
+	glTextureStorage2D(zbuffer, 1, GL_R32F, renderw, renderh);
+	glTextureStorage3D(samplebuffer, 1, SAMPLE_BUFFER_TYPE, renderw, renderh, SAMPLES_PER_PIXEL);
 
 	int abuffer_read_layer = 0, frame = 0;
 	CameraParameters cameras[2] = {};
@@ -57,19 +63,21 @@ int main() {
 		// timestamp objects make gl queries at those locations; you can substract them to get the time
 		TimeStamp start;
 		float secs = frame / 60.f;
-		cameraPath(secs, cameras[1]);
+		cameraPath(0.f, cameras[1]);
 		glNamedBufferSubData(cameraData, 0, sizeof(cameras), &cameras);
 
 		if (!march)
 			march = createProgram("shaders/marcher.glsl");
 
 		glUseProgram(march);
-	
+
 		glUniform1i("frame", frame);
 		glUniform1f("secs", secs);
 		bindBuffer("cameraArray", cameraData);
 		// .. this includes images
 		bindImage("gbuffer", 0, gbuffer, GL_WRITE_ONLY, GL_RGBA32F);
+		bindImage("zbuffer", 0, zbuffer, GL_WRITE_ONLY, GL_R32F);
+		bindImage("samplebuffer", 0, samplebuffer, GL_WRITE_ONLY, SAMPLE_BUFFER_TYPE);
 		// the arguments of dispatch are the numbers of thread blocks in each direction;
 		// since our local size is 16x16x1, we'll get 1024x1024x1 threads total, just enough
 		// for our image
@@ -78,6 +86,19 @@ int main() {
 		// we're writing to an image in a shader, so we should have a barrier to ensure the writes finish
 		// before the next shader call (wasn't an issue on my hardware in this case, but you should always make sure
 		// to place the correct barriers when writing from compute shaders and reading in subsequent shaders)
+		glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+
+		/*if (!sampleResolve) {
+			sampleResolve = createProgram(
+				GLSL(460,
+					uniform sampler2DArray samplebuffer;
+					uniform sampler2D zbuffer;
+					void main() {
+			}
+			)
+			);
+		}*/
+
 		glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 
 		// flip the ping-pong flag
@@ -131,6 +152,7 @@ int main() {
 					}
 
 					uniform sampler2D gbuffer;
+					uniform sampler2D zbuffer;
 					uniform sampler2DArray abuffer;
 					layout(rgba32f) uniform image2DArray abuffer_image;
 					out vec4 col;
@@ -139,11 +161,12 @@ int main() {
 
 					void main() {
 						vec4 c1 = texelFetch(gbuffer, ivec2(gl_FragCoord.xy), 0);
+						float z1 = texelFetch(zbuffer, ivec2(gl_FragCoord.xy), 0).x;
 
 						vec3 rayStartPos1, rayDir1;
 						vec2 uv1 = vec2(gl_FragCoord.xy) / 1024.;
 						getCameraProjection(cameras[1], uv1, rayStartPos1, rayDir1);
-						vec3 world1 = cameras[1].pos + rayDir1 * c1.w;
+						vec3 world1 = cameras[1].pos + rayDir1 * z1;
 
 						vec2 uv0 = reprojectPoint(cameras[0], world1);
 						//float z0 = texelFetch(abuffer, ivec3(uv0 * textureSize(abuffer, 0).xy, abuffer_read_layer), 0).w;
@@ -162,9 +185,12 @@ int main() {
 						float unbiased_diff = abs(lum0 - lum1) / max(lum0, max(lum1, 0.2));
 						float unbiased_weight = 1.0 - unbiased_diff;
 						float unbiased_weight_sqr = unbiased_weight * unbiased_weight;
-						float feedback = mix(0., 1.0, unbiased_weight_sqr);
+						float feedback = mix(0., 0.95, unbiased_weight_sqr);
 
+						if (frame == 0) feedback = 0;
 						vec3 c = feedback * c0.xyz + (1 - feedback) * c1.xyz;
+						
+						c = vec3(.5) + .5*sin(vec3(z1));
 						//if (c1.w != 1e10 && length(world0 - world1) > 2e-1) c=vec3(1.,0.,0.);
 						//c = vec3(0.5) + 0.5*sin((world0 - world1)*100.);
 						imageStore(abuffer_image, ivec3(gl_FragCoord.xy, 1 - abuffer_read_layer), vec4(c, c1.w));
@@ -177,6 +203,7 @@ int main() {
 		glUseProgram(draw);
 
 		bindTexture("gbuffer", gbuffer);
+		bindTexture("zbuffer", zbuffer);
 		bindTexture("abuffer", abuffer);
 		bindImage("abuffer_image", 0, abuffer, GL_WRITE_ONLY, GL_RGBA32F);
 		glUniform1i("abuffer_read_layer", abuffer_read_layer);

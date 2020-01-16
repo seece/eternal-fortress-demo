@@ -32,6 +32,8 @@ uniform int frame;
 uniform float secs;
 
 layout(rgba32f) uniform image2D gbuffer;
+layout(r32f) uniform image2D zbuffer;
+layout(rgba16f) uniform image2DArray samplebuffer;
 
 struct CameraParams {
     vec3 pos;
@@ -100,47 +102,66 @@ void getCameraProjection(CameraParams cam, vec2 uv, out vec3 outPos, out vec3 ou
 void main() {
 	// seed with seeds that change at different time offsets (not crucial to the algorithm but yields nicer results)
 	srand(1u, uint(gl_GlobalInvocationID.x / 4) + 1u, uint(gl_GlobalInvocationID.y / 4) + 1u);
-	srand(uint((rand())) + uint(frame/100), uint(gl_GlobalInvocationID.x / 4) + 1u, uint(gl_GlobalInvocationID.y / 4) + 1u);
+	srand(uint((rand())) + uint(frame/100), uint(gl_GlobalInvocationID.x / 4) + 1u + uint(frame*3), uint(gl_GlobalInvocationID.y / 4) + 1u + uint(frame));
 
-	vec2 uv = getThreadUV(gl_GlobalInvocationID);
+    int samplesPerPixel = imageSize(samplebuffer).z;
+    float depth;
 
-	CameraParams cam = cameras[1];
-	vec3 p; // = vec3(uv - vec2(.5, .5), -1.);
-	vec3 dir;// = normalize(p);
-	getCameraProjection(cam, uv, p, dir);
+    for (int sample_id=0; sample_id < samplesPerPixel; sample_id++)
+    {
+        vec2 uv = getThreadUV(gl_GlobalInvocationID);
+        vec2 jitter = vec2(rand(), rand()) - vec2(0.5, 0.5);
+        jitter /= imageSize(gbuffer).xy;
+        uv += jitter;
 
-	int hitmat = MATERIAL_SKY;
-	int i;
+        CameraParams cam = cameras[1];
+        vec3 p; // = vec3(uv - vec2(.5, .5), -1.);
+        vec3 dir;// = normalize(p);
+        getCameraProjection(cam, uv, p, dir);
 
-	for (i=0;i<500;i++) {
-		int mat;
-		float d = scene(p, mat);
-		if (d < 1e-5) {
-			hitmat = mat;
-			break;
-		}
-		p += d * dir;
-	}
 
-	vec3 color;
+        int hitmat = MATERIAL_SKY;
+        int i;
 
-	float depth = 1e10;
-	switch (hitmat) {
-		case MATERIAL_SKY:
-			color = vec3(0., 0.2*abs(dir.y), 0.5 - dir.y);
-			break;
-		case MATERIAL_OTHER:
-			depth = length(p - cam.pos);
+        for (i=0;i<500;i++) {
+            int mat;
+            float d = scene(p, mat);
+            if (d < 1e-5) {
+                hitmat = mat;
+                break;
+            }
+            p += d * dir;
+        }
 
-			vec3 normal = evalnormal(p);
-			vec3 to_camera = normalize(cam.pos - p);
-            vec3 to_light = normalize(vec3(-0.5, -1.0, 0.7));
-			float shine = 0.5+0.5*dot(normal, to_light);
-			shine = pow(shine, 6.);
-			color = vec3(shine);
-			break;
-	}
+        vec3 color;
 
-	imageStore(gbuffer, ivec2(gl_GlobalInvocationID.xy), vec4(color, depth));
+        depth = 1e10;
+        switch (hitmat) {
+            case MATERIAL_SKY:
+                color = vec3(0., 0.2*abs(dir.y), 0.5 - dir.y);
+                break;
+            case MATERIAL_OTHER:
+                depth = length(p - cam.pos);
+
+                vec3 normal = evalnormal(p);
+                vec3 to_camera = normalize(cam.pos - p);
+                vec3 to_light = normalize(vec3(-0.5, -1.0, 0.7));
+                float shine = 0.5+0.5*dot(normal, to_light);
+                shine = pow(shine, 6.);
+                color = vec3(shine);
+                break;
+        }
+
+    //ivec2 dp = ivec2(jitter.x < 0 ? -1 : 1, jitter.y < 0 ? -1 : 1);
+        imageStore(samplebuffer, ivec3(gl_GlobalInvocationID.xy, sample_id), vec4(color, 0.));
+        imageStore(gbuffer, ivec2(gl_GlobalInvocationID.xy), vec4(color, 0.));
+    }
+
+    // hack: we write only the last z value to the buffer
+    imageStore(zbuffer, ivec2(gl_GlobalInvocationID.xy), vec4(depth));
+
+	//imageStore(gbuffer, ivec2(gl_GlobalInvocationID.xy) + dp, vec4(color, depth));
+	//imageStore(gbuffer, ivec2(gl_GlobalInvocationID.xy) + dp, vec4(color, depth));
+	//imageStore(gbuffer, ivec2(gl_GlobalInvocationID.xy) + dp, vec4(color, depth));
 }
 
