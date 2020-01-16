@@ -74,8 +74,7 @@ int main() {
 		glUniform1i("frame", frame);
 		glUniform1f("secs", secs);
 		bindBuffer("cameraArray", cameraData);
-		// .. this includes images
-		bindImage("gbuffer", 0, gbuffer, GL_WRITE_ONLY, GL_RGBA32F);
+		//bindImage("gbuffer", 0, gbuffer, GL_WRITE_ONLY, GL_RGBA32F);
 		bindImage("zbuffer", 0, zbuffer, GL_WRITE_ONLY, GL_R32F);
 		bindImage("samplebuffer", 0, samplebuffer, GL_WRITE_ONLY, SAMPLE_BUFFER_TYPE);
 		// the arguments of dispatch are the numbers of thread blocks in each direction;
@@ -88,18 +87,63 @@ int main() {
 		// to place the correct barriers when writing from compute shaders and reading in subsequent shaders)
 		glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 
-		/*if (!sampleResolve) {
+		TimeStamp drawTime;
+
+		if (!sampleResolve) {
 			sampleResolve = createProgram(
 				GLSL(460,
+					layout(local_size_x = 16, local_size_y = 16) in;
+
+					vec2 unpackJitter(float d)
+					{
+						uint c = floatBitsToUint(d);
+						uvec2 b = uvec2((c >> 8) & 0xff, c & 0xff);
+						vec2 a = vec2(b) / 255;
+						return a - vec2(0.5);
+					}
+
 					uniform sampler2DArray samplebuffer;
 					uniform sampler2D zbuffer;
+					layout(rgba32f) uniform image2D gbuffer;
+
 					void main() {
-			}
+						ivec2 ij = ivec2(gl_GlobalInvocationID.xy);
+						int samplesPerPixel = textureSize(samplebuffer, 0).z;
+						vec3 accum = vec3(0.);
+						float totalWeight = 0.;
+						//ivec2 dp = ivec2(jitter.x < 0 ? -1 : 1, jitter.y < 0 ? -1 : 1);
+
+						for (int y = -1; y <= 1; y++) {
+							for (int x = -1; x <= 1; x++) {
+								ivec2 delta = ivec2(x, y);
+								ivec2 coord = ij + delta;
+								for (int i = 0; i < samplesPerPixel; i++) {
+									vec4 c = texelFetch(samplebuffer, ivec3(coord, i), 0);
+									vec2 jitter = unpackJitter(floatBitsToUint(c.w));
+									
+									vec2 sampleCoord = vec2(x, y) + jitter;
+									float weight = max(0., 1. - length(sampleCoord));
+									accum += weight * c.rgb;
+									totalWeight += weight;
+								}
+							}
+						}
+
+						accum /= totalWeight;
+						imageStore(gbuffer, ij, vec4(accum, 0.));
+					}
 			)
 			);
-		}*/
+		}
+
+		glUseProgram(sampleResolve);
+		bindImage("gbuffer", 0, gbuffer, GL_WRITE_ONLY, GL_RGBA32F);
+		bindTexture("samplebuffer", samplebuffer);
+		glDispatchCompute(64, 64, 1);
 
 		glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+
+		TimeStamp resolveTime;
 
 		// flip the ping-pong flag
 		abuffer_read_layer = 1 - abuffer_read_layer;
@@ -188,9 +232,8 @@ int main() {
 						float feedback = mix(0., 0.95, unbiased_weight_sqr);
 
 						if (frame == 0) feedback = 0;
+						feedback = 0.0;
 						vec3 c = feedback * c0.xyz + (1 - feedback) * c1.xyz;
-						
-						c = vec3(.5) + .5*sin(vec3(z1));
 						//if (c1.w != 1e10 && length(world0 - world1) > 2e-1) c=vec3(1.,0.,0.);
 						//c = vec3(0.5) + 0.5*sin((world0 - world1)*100.);
 						imageStore(abuffer_image, ivec3(gl_FragCoord.xy, 1 - abuffer_read_layer), vec4(c, c1.w));
@@ -216,7 +259,10 @@ int main() {
 		TimeStamp end;
 
 		// print the timing (word of warning; this forces a cpu-gpu synchronization)
-		font.drawText(L"⏱: " + std::to_wstring(end-start), 10.f, 10.f, 15.f); // text, x, y, font size
+		font.drawText(L"Total: " + std::to_wstring(end - start), 10.f, 10.f, 15.f); // text, x, y, font size
+		font.drawText(L"Draw: " + std::to_wstring(drawTime - start), 10.f, 25.f, 15.f);
+		font.drawText(L"Resolve: " + std::to_wstring(resolveTime - drawTime), 10.f, 40.f, 15.f); 
+		font.drawText(L"PostProc: " + std::to_wstring(end - resolveTime), 10.f, 55.f, 15.f);
 
 		// this actually displays the rendered image
 		swapBuffers();

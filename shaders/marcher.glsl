@@ -99,26 +99,43 @@ void getCameraProjection(CameraParams cam, vec2 uv, out vec3 outPos, out vec3 ou
 	outDir = normalize(outPos - cam.pos);
 }
 
+// absolute error (measured with euclidian length) seems to be less than 0.003
+float packJitter(vec2 jitter)
+{
+    vec2 a = jitter + vec2(0.5);
+    a *= 255;
+    uvec2 b = uvec2(a);
+    uint c = (b.x << 8) | b.y;
+    return uintBitsToFloat(c);
+}
+
+vec2 unpackJitter(float d)
+{
+    uint c = floatBitsToUint(d);
+    uvec2 b = uvec2((c >> 8) & 0xff, c & 0xff);
+    vec2 a = vec2(b) / 255;
+    return a - vec2(0.5);
+}
+
 void main() {
-	// seed with seeds that change at different time offsets (not crucial to the algorithm but yields nicer results)
-	srand(1u, uint(gl_GlobalInvocationID.x / 4) + 1u, uint(gl_GlobalInvocationID.y / 4) + 1u);
-	srand(uint((rand())) + uint(frame/100), uint(gl_GlobalInvocationID.x / 4) + 1u + uint(frame*3), uint(gl_GlobalInvocationID.y / 4) + 1u + uint(frame));
+    uint seed = uint(gl_GlobalInvocationID.x) + uint(gl_GlobalInvocationID.y);
+    seed = uint(rand()*9999 + frame);
 
     int samplesPerPixel = imageSize(samplebuffer).z;
     float depth;
+    vec3 accum=vec3(0.);
 
     for (int sample_id=0; sample_id < samplesPerPixel; sample_id++)
     {
-        vec2 uv = getThreadUV(gl_GlobalInvocationID);
         vec2 jitter = vec2(rand(), rand()) - vec2(0.5, 0.5);
+
+        vec2 uv = getThreadUV(gl_GlobalInvocationID);
         jitter /= imageSize(gbuffer).xy;
         uv += jitter;
 
         CameraParams cam = cameras[1];
-        vec3 p; // = vec3(uv - vec2(.5, .5), -1.);
-        vec3 dir;// = normalize(p);
+        vec3 p, dir;
         getCameraProjection(cam, uv, p, dir);
-
 
         int hitmat = MATERIAL_SKY;
         int i;
@@ -152,16 +169,14 @@ void main() {
                 break;
         }
 
-    //ivec2 dp = ivec2(jitter.x < 0 ? -1 : 1, jitter.y < 0 ? -1 : 1);
-        imageStore(samplebuffer, ivec3(gl_GlobalInvocationID.xy, sample_id), vec4(color, 0.));
-        imageStore(gbuffer, ivec2(gl_GlobalInvocationID.xy), vec4(color, 0.));
+        accum+=color;
+
+        imageStore(samplebuffer, ivec3(gl_GlobalInvocationID.xy, sample_id), vec4(color, packJitter(jitter)));
     }
 
+    // TODO remove this write (removing it increases frametime?)
+    imageStore(gbuffer, ivec2(gl_GlobalInvocationID.xy), vec4(accum / samplesPerPixel, 0.));
     // hack: we write only the last z value to the buffer
     imageStore(zbuffer, ivec2(gl_GlobalInvocationID.xy), vec4(depth));
-
-	//imageStore(gbuffer, ivec2(gl_GlobalInvocationID.xy) + dp, vec4(color, depth));
-	//imageStore(gbuffer, ivec2(gl_GlobalInvocationID.xy) + dp, vec4(color, depth));
-	//imageStore(gbuffer, ivec2(gl_GlobalInvocationID.xy) + dp, vec4(color, depth));
 }
 
