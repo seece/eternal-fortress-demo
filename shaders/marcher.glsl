@@ -139,7 +139,7 @@ void main() {
         int hitmat = MATERIAL_SKY;
         int i;
 
-        for (i=0;i<300;i++) {
+        for (i=0;i<150;i++) {
             int mat;
             float d = scene(p, mat);
             if (d < 1e-5) {
@@ -150,11 +150,12 @@ void main() {
         }
 
         vec3 color;
+        vec3 skyColor = vec3(0., 0.2*abs(dir.y), 0.5 - dir.y);
 
         float depth = 1e10;
         switch (hitmat) {
             case MATERIAL_SKY:
-                color = vec3(0., 0.2*abs(dir.y), 0.5 - dir.y);
+                color = skyColor;
                 break;
             case MATERIAL_OTHER:
                 depth = length(p - cam.pos);
@@ -164,7 +165,11 @@ void main() {
                 vec3 to_light = normalize(vec3(-0.5, -1.0, 0.7));
                 float shine = 0.5+0.5*dot(normal, to_light);
                 shine = pow(shine, 16.);
-                color = vec3(shine);
+                vec3 base = vec3(0.5) + .5*sin(vec3(p) * 50.);
+                color = vec3(base) * vec3(shine);
+                color = clamp(color, vec3(0.), vec3(10.));
+                float fog = pow(min(1., depth / 20.), 2.0);
+                color = mix(color, skyColor, fog);
                 break;
         }
 
