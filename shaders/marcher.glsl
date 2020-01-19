@@ -163,7 +163,7 @@ void main() {
                 vec3 to_camera = normalize(cam.pos - p);
                 vec3 to_light = normalize(vec3(-0.5, -1.0, 0.7));
                 float shine = 0.5+0.5*dot(normal, to_light);
-                shine = pow(shine, 6.);
+                shine = pow(shine, 16.);
                 color = vec3(shine);
                 break;
         }

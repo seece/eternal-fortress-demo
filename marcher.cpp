@@ -17,7 +17,7 @@ const int screenw = 1024, screenh = 1024;
 static constexpr int SAMPLES_PER_PIXEL = 2;
 static constexpr GLuint SAMPLE_BUFFER_TYPE = GL_RGBA16F;
 
-void cameraPath(float t, CameraParameters& cam)
+static void cameraPath(float t, CameraParameters& cam)
 {
 	float tt = t * 0.2f;
 	cam.pos = vec3(0.5f*sin(tt), 0.f, 6.f + 0.5f*cos(tt));
@@ -25,6 +25,11 @@ void cameraPath(float t, CameraParameters& cam)
 	cam.zoom = 0.9f;
 	cam.right = normalize(cross(cam.dir, vec3(0.f, 1.f, 0.f)));
 	cam.up = cross(cam.dir, cam.right);
+}
+
+static void setWrapToClamp(GLuint tex) {
+	glTextureParameteri(tex, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTextureParameteri(tex, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 }
 
 
@@ -45,6 +50,12 @@ int main() {
 	Texture<GL_TEXTURE_2D> zbuffer;
 	Texture<GL_TEXTURE_2D_ARRAY> samplebuffer;
 	Buffer cameraData;
+
+	setWrapToClamp(abuffer);
+	setWrapToClamp(gbuffer);
+	setWrapToClamp(zbuffer);
+	setWrapToClamp(samplebuffer);
+
 
 	int renderw = screenw, renderh = screenh;
 
@@ -175,6 +186,24 @@ int main() {
 						CameraParams cameras[2];
 					};
 
+					// source: https://github.com/playdeadgames/temporal/blob/4795aa0007d464371abe60b7b28a1cf893a4e349/Assets/Shaders/TemporalReprojection.shader#L122
+					vec4 clip_aabb(vec3 aabb_min, vec3 aabb_max, vec4 p, vec4 q)
+					{
+						// note: only clips towards aabb center (but fast!)
+						vec3 p_clip = vec3(0.5) * (aabb_max + aabb_min);
+						vec3 e_clip = vec3(0.5) * (aabb_max - aabb_min) + vec3(0.00000001f);
+
+						vec4 v_clip = q - vec4(p_clip, p.w);
+						vec3 v_unit = v_clip.xyz / e_clip;
+						vec3 a_unit = abs(v_unit);
+						float ma_unit = max(a_unit.x, max(a_unit.y, a_unit.z));
+
+						if (ma_unit > 1.0)
+							return vec4(p_clip, p.w) + v_clip / ma_unit;
+						else
+							return q;// point inside aabb
+					}
+
 					void getCameraProjection(CameraParams cam, vec2 uv, out vec3 outPos, out vec3 outDir) {
 						uv /= cam.zoom;
 						// vec3 right = cross(cam.dir, vec3(0., 1., 0.));
@@ -206,6 +235,27 @@ int main() {
 					void main() {
 						vec4 c1 = texelFetch(gbuffer, ivec2(gl_FragCoord.xy), 0);
 						float z1 = texelFetch(zbuffer, ivec2(gl_FragCoord.xy), 0).x;
+						const ivec2[8] deltas = {
+							ivec2(-1, -1),
+							ivec2(0, -1),
+							ivec2(1, -1),
+							ivec2(-1,  0),
+							ivec2(1,  0),
+							ivec2(-1,  1),
+							ivec2(0,  1),
+							ivec2(1,  1),
+						};
+
+						vec3 minbox = c1.rgb;
+						vec3 maxbox = c1.rgb;
+						vec3 cavg = c1.rgb;
+						for (int i = 0; i < 8; i++) {
+							vec4 cn = texelFetch(gbuffer, ivec2(gl_FragCoord.xy) + deltas[i], 0);
+							minbox = min(minbox, cn.rgb);
+							maxbox = max(maxbox, cn.rgb);
+							cavg += cn.rgb;
+						}
+						cavg /= 9.;
 
 						vec3 rayStartPos1, rayDir1;
 						vec2 uv1 = vec2(gl_FragCoord.xy) / 1024.;
@@ -214,9 +264,15 @@ int main() {
 
 						vec2 uv0 = reprojectPoint(cameras[0], world1);
 						vec4 c0 = texture(abuffer, vec3(uv0, abuffer_read_layer));
+						float z0 = c0.w; // NOTE: Linearly interpolated depth.
 						vec3 rayStartPos0, rayDir0;
 						getCameraProjection(cameras[0], uv0, rayStartPos0, rayDir0);
-						//vec3 world0 = cameras[0].pos + rayDir0 * z0;
+						vec3 world0 = cameras[0].pos + rayDir0 * z0;
+
+						float worldSpaceDist = length(world0 - world1);
+
+						//c0.rgb = clamp(c0.rgb, minbox, maxbox);
+						//c0.rgb = clip_aabb(minbox, maxbox, vec4(clamp(cavg, minbox, maxbox), 0.), vec4(c0.rgb, 0.)).rgb;
 
 						// feedback weight from unbiased luminance diff (t.lottes)
 						// https://github.com/playdeadgames/temporal/blob/4795aa0007d464371abe60b7b28a1cf893a4e349/Assets/Shaders/TemporalReprojection.shader#L313
@@ -226,14 +282,19 @@ int main() {
 						float unbiased_diff = abs(lum0 - lum1) / max(lum0, max(lum1, 0.2));
 						float unbiased_weight = 1.0 - unbiased_diff;
 						float unbiased_weight_sqr = unbiased_weight * unbiased_weight;
-						float feedback = mix(0., 0.95, unbiased_weight_sqr);
-						feedback = 0.99;
+						float feedback = mix(0.0, 1.0, unbiased_weight_sqr);
+						feedback = 0.8;
+						//feedback = max(0., feedback - worldSpaceDist);
+						//feedback = 0;
 
 						if (frame == 0) feedback = 0;
 						vec3 c = feedback * c0.xyz + (1 - feedback) * c1.xyz;
 
+						
+						//c = vec3(feedback);
+
 						imageStore(abuffer_image, ivec3(gl_FragCoord.xy, 1 - abuffer_read_layer), vec4(c, z1));
-						col = vec4(c, 1.);
+						col = vec4(pow(c, vec3(1./2.2)), 1.);
 					}
 				)
 			);
