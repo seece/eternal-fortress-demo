@@ -32,6 +32,7 @@ uniform int frame;
 uniform float secs;
 
 layout(r32f) uniform image2D zbuffer;
+layout(r32ui) uniform uimage2D minzbuffer;
 layout(rgba16f) uniform image2DArray samplebuffer;
 
 struct CameraParams {
@@ -118,14 +119,21 @@ vec2 unpackJitter(float d)
 
 void main() {
     uint seed = uint(gl_GlobalInvocationID.x) + uint(gl_GlobalInvocationID.y);
+    srand(seed, seed, seed);
     seed = uint(rand()*9999 + frame);
-
+    ivec2 res = imageSize(zbuffer).xy;
     int samplesPerPixel = imageSize(samplebuffer).z;
+
+    ivec2 jumpTileSize = ivec2(res / imageSize(minzbuffer).xy);
+    float jumpMinSize = sqrt(2) * ceil(max(jumpTileSize.x, jumpTileSize.y));
+    ivec2 jumpReadCoord = ivec2(gl_GlobalInvocationID.xy / jumpTileSize);
+
     float minDepth = 1e20;
     vec3 accum = vec3(0.);
 
     for (int sample_id=0; sample_id < samplesPerPixel; sample_id++)
     {
+        float jumpDepth = uintBitsToFloat(imageLoad(minzbuffer, jumpReadCoord).x);
         vec2 jitter = vec2(rand(), rand()) - vec2(0.5, 0.5);
 
         vec2 uv = getThreadUV(gl_GlobalInvocationID);
@@ -135,9 +143,13 @@ void main() {
         CameraParams cam = cameras[1];
         vec3 p, dir;
         getCameraProjection(cam, uv, p, dir);
+        p += dir * jumpDepth;
 
+        bool storedDepth = false;
         int hitmat = MATERIAL_SKY;
         int i;
+        float travel=0.;
+        float maxProjSize = 0.;
 
         for (i=0;i<150;i++) {
             int mat;
@@ -146,30 +158,47 @@ void main() {
                 hitmat = mat;
                 break;
             }
+
+            if (true) {
+                travel = length(p - cam.pos);
+                float projSize = res.x * (d / travel);
+                maxProjSize = max(projSize, maxProjSize);
+                float newDepth = travel - d - 1;
+                if (projSize > jumpMinSize && newDepth > jumpDepth) {
+                //if (newDepth > jumpDepth) {
+                //if (true) {
+                    storedDepth = true;
+                    // TODO this should go to all overlapping cells
+                    jumpDepth = imageAtomicMax(minzbuffer, jumpReadCoord, floatBitsToUint(newDepth));
+                    //jumpDepth = imageAtomicMax(minzbuffer, jumpReadCoord, floatBitsToUint(sin(uv.x*20.) * sin(uv.y*20.)));
+                }
+            }
+
+
             p += d * dir;
+
         }
 
         vec3 color;
         vec3 skyColor = vec3(0., 0.2*abs(dir.y), 0.5 - dir.y);
 
-        float depth = 1e10;
+        float depth = length(p - cam.pos);
         switch (hitmat) {
             case MATERIAL_SKY:
                 color = skyColor;
                 break;
             case MATERIAL_OTHER:
-                depth = length(p - cam.pos);
 
                 vec3 normal = evalnormal(p);
                 vec3 to_camera = normalize(cam.pos - p);
                 vec3 to_light = normalize(vec3(-0.5, -1.0, 0.7));
                 float shine = 0.5+0.5*dot(normal, to_light);
                 shine = pow(shine, 16.);
-                vec3 base = vec3(0.5) + .5*sin(vec3(p) * 50.);
-                color = vec3(base) * vec3(shine);
+                vec3 base = vec3(1.); //vec3(0.5) + .5*sin(vec3(p) * 50.);
+                color = base * vec3(shine);
                 color = clamp(color, vec3(0.), vec3(10.));
-                float fog = pow(min(1., depth / 20.), 2.0);
-                color = mix(color, skyColor, fog);
+                float fog = pow(min(1., depth / 10.), 4.0);
+                color = mix(color, vec3(0.5, 0., 0.), fog);
                 break;
         }
 
