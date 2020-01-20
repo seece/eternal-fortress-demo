@@ -143,15 +143,16 @@ void main() {
         CameraParams cam = cameras[1];
         vec3 p, dir;
         getCameraProjection(cam, uv, p, dir);
+        vec3 startPos = p;
         p += dir * jumpDepth;
 
         bool storedDepth = false;
         int hitmat = MATERIAL_SKY;
         int i;
         float travel=0.;
-        float maxProjSize = 0.;
+        float smallestProjSize = 1e9;
 
-        for (i=0;i<150;i++) {
+        for (i=0;i<300;i++) {
             int mat;
             float d = scene(p, mat);
             if (d < 1e-5) {
@@ -159,12 +160,13 @@ void main() {
                 break;
             }
 
-            if (true) {
-                travel = length(p - cam.pos);
-                float projSize = res.x * (d / travel);
-                maxProjSize = max(projSize, maxProjSize);
-                float newDepth = travel - d - 1;
-                if (projSize > jumpMinSize && newDepth > jumpDepth) {
+            travel = length(p - startPos);
+            float projSize = res.x * (d / travel);
+            smallestProjSize = min(smallestProjSize, projSize);
+
+            if (smallestProjSize > jumpMinSize) {
+                float newDepth = travel - d;
+                if (newDepth > jumpDepth) {
                 //if (newDepth > jumpDepth) {
                 //if (true) {
                     storedDepth = true;

@@ -14,9 +14,9 @@ struct CameraParameters {
 };
 
 const int screenw = 1024, screenh = 1024;
-static constexpr int SAMPLES_PER_PIXEL = 1;
+static constexpr int SAMPLES_PER_PIXEL = 4;
 static constexpr GLuint SAMPLE_BUFFER_TYPE = GL_RGBA16F;
-static constexpr int MINZ_BUFFER_RESOLUTION = 64;
+static constexpr int MINZ_BUFFER_RESOLUTION = 128;
 static constexpr GLuint MINZ_BUFFER_TYPE = GL_R32UI;
 
 
@@ -317,7 +317,7 @@ int main() {
 							ivec2 jumpReadCoord = ivec2(gl_FragCoord.xy) / tileSize;
 							float z = uintBitsToFloat(imageLoad(minzbuffer, jumpReadCoord).x);
 							//col.gb = vec2(.5 + .5*sin(z*50.));
-							col.gb = vec2(z/8.);
+							col.gb = vec2(pow(z/1., 2.));
 						}
 					}
 				)
@@ -349,7 +349,7 @@ int main() {
 		swapBuffers();
 
 		std::swap(cameras[0], cameras[1]);
-		//frame++; //HACK freeze time
+		//frame++; // HACK: don't advance frames!!!!!
 	}
 	return 0;
 }
