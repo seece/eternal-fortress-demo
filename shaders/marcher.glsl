@@ -59,26 +59,28 @@ vec2 getThreadUV(uvec3 id) {
 
 const float SCALE = 2.7;
 const float MR2 = 0.01;
-const int mbox_iters = 7;
 vec4 mbox_scalevec = vec4(SCALE, SCALE, SCALE, abs(SCALE)) / MR2;
-float mbox_C1 = abs(SCALE-1.0), mbox_C2 = pow(abs(SCALE), float(1-mbox_iters));
+float mbox_C1 = abs(SCALE-1.0);
 
-float mandelbox(vec3 position) {
-
+float mandelbox(vec3 position, int iters=7) {
+    float mbox_C2 = pow(abs(SCALE), float(1-iters));
 	// distance estimate
 	vec4 p = vec4(position.xyz, 1.0), p0 = vec4(position.xyz, 1.0);  // p.w is knighty's DEfactor
-	for (int i=0; i<mbox_iters; i++) {
+	for (int i=0; i<iters; i++) {
 		p.xyz = clamp(p.xyz, -1.0, 1.0) * 2.0 - p.xyz;  // box fold: min3, max3, mad3
 		float r2 = dot(p.xyz, p.xyz);  // dp3
 		p.xyzw *= clamp(max(MR2/r2, MR2), 0.0, 1.0);  // sphere fold: div1, max1.sat, mul4
 		p.xyzw = p*mbox_scalevec + p0;  // mad4
 	}
-	return (length(p.xyz) - mbox_C1) / p.w - mbox_C2;
+	float d = (length(p.xyz) - mbox_C1) / p.w - mbox_C2;
+    if (iters == 5) d += 1.0e-2; // hacky inflation fix
+    if (iters == 6) d += 2e-3;
+    return d;
 }
 
-float scene(vec3 p, out int material) {
+float scene(vec3 p, out int material, float pixelConeSize=1.) {
 	material = MATERIAL_OTHER;
-	return mandelbox(p);
+	return mandelbox(p, 7);
 }
 
 vec3 evalnormal(vec3 p) {
@@ -117,6 +119,29 @@ vec2 unpackJitter(float d)
     return a - vec2(0.5);
 }
 
+float march(inout vec3 p, vec3 dir, out int material, int num_iters, float maxDist=1e9) {
+    vec3 startPos = p;
+    int i;
+    float travel=0.;
+
+    for (i=0;i<num_iters;i++) {
+        int mat;
+        float d = scene(p, mat);
+        if (d < 1e-5) {
+            material = mat;
+            break;
+        }
+
+        p += d * dir;
+        travel = length(p - startPos);
+        if (travel > maxDist)
+            break;
+    }
+
+    return travel;
+
+}
+
 void main() {
     uint seed = uint(gl_GlobalInvocationID.x) + uint(gl_GlobalInvocationID.y);
     srand(seed, seed, seed);
@@ -124,16 +149,11 @@ void main() {
     ivec2 res = imageSize(zbuffer).xy;
     int samplesPerPixel = imageSize(samplebuffer).z;
 
-    ivec2 jumpTileSize = ivec2(res / imageSize(minzbuffer).xy);
-    float jumpMinSize = sqrt(2) * ceil(max(jumpTileSize.x, jumpTileSize.y));
-    ivec2 jumpReadCoord = ivec2(gl_GlobalInvocationID.xy / jumpTileSize);
-
     float minDepth = 1e20;
     vec3 accum = vec3(0.);
 
     for (int sample_id=0; sample_id < samplesPerPixel; sample_id++)
     {
-        float jumpDepth = uintBitsToFloat(imageLoad(minzbuffer, jumpReadCoord).x);
         vec2 jitter = vec2(rand(), rand()) - vec2(0.5, 0.5);
 
         vec2 uv = getThreadUV(gl_GlobalInvocationID);
@@ -143,46 +163,13 @@ void main() {
         CameraParams cam = cameras[1];
         vec3 p, dir;
         getCameraProjection(cam, uv, p, dir);
-        vec3 startPos = p;
-        p += dir * jumpDepth;
 
-        bool storedDepth = false;
         int hitmat = MATERIAL_SKY;
-        int i;
-        float travel=0.;
-        float smallestProjSize = 1e9;
-
-        for (i=0;i<300;i++) {
-            int mat;
-            float d = scene(p, mat);
-            if (d < 1e-5) {
-                hitmat = mat;
-                break;
-            }
-
-            travel = length(p - startPos);
-            float projSize = res.x * (d / travel);
-            smallestProjSize = min(smallestProjSize, projSize);
-
-            if (smallestProjSize > jumpMinSize) {
-                float newDepth = travel - d;
-                if (newDepth > jumpDepth) {
-                //if (newDepth > jumpDepth) {
-                //if (true) {
-                    storedDepth = true;
-                    // TODO this should go to all overlapping cells
-                    jumpDepth = imageAtomicMax(minzbuffer, jumpReadCoord, floatBitsToUint(newDepth));
-                    //jumpDepth = imageAtomicMax(minzbuffer, jumpReadCoord, floatBitsToUint(sin(uv.x*20.) * sin(uv.y*20.)));
-                }
-            }
-
-
-            p += d * dir;
-
-        }
+        float travel = march(p, dir, hitmat, 300);
 
         vec3 color;
         vec3 skyColor = vec3(0., 0.2*abs(dir.y), 0.5 - dir.y);
+        //if (hitmat == MATERIAL_SKY && travel < 100.) { hitmat = MATERIAL_OTHER; }
 
         float depth = length(p - cam.pos);
         switch (hitmat) {
@@ -194,10 +181,16 @@ void main() {
                 vec3 normal = evalnormal(p);
                 vec3 to_camera = normalize(cam.pos - p);
                 vec3 to_light = normalize(vec3(-0.5, -1.0, 0.7));
-                float shine = 0.5+0.5*dot(normal, to_light);
-                shine = pow(shine, 16.);
+
+                int shadowMat = MATERIAL_SKY;
+                vec3 shadowRayPos = p+to_camera*(0.001 + 0.0009 * rand());
+                const float maxShadowDist = 20.;
+                float lightDist = march(shadowRayPos, to_light, shadowMat, 60, maxShadowDist);
+                float sun = min(lightDist, maxShadowDist) / maxShadowDist;
+
+                float shine = max(0., dot(normal, to_light));
                 vec3 base = vec3(1.); //vec3(0.5) + .5*sin(vec3(p) * 50.);
-                color = base * vec3(shine);
+                color = base * sun * vec3(shine);
                 color = clamp(color, vec3(0.), vec3(10.));
                 float fog = pow(min(1., depth / 10.), 4.0);
                 color = mix(color, vec3(0.5, 0., 0.), fog);

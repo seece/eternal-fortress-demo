@@ -14,7 +14,7 @@ struct CameraParameters {
 };
 
 const int screenw = 1024, screenh = 1024;
-static constexpr int SAMPLES_PER_PIXEL = 4;
+static constexpr int SAMPLES_PER_PIXEL = 1;
 static constexpr GLuint SAMPLE_BUFFER_TYPE = GL_RGBA16F;
 static constexpr int MINZ_BUFFER_RESOLUTION = 128;
 static constexpr GLuint MINZ_BUFFER_TYPE = GL_R32UI;
@@ -295,30 +295,15 @@ int main() {
 						float unbiased_weight = 1.0 - unbiased_diff;
 						float unbiased_weight_sqr = unbiased_weight * unbiased_weight;
 						float feedback = mix(0.0, 1.0, unbiased_weight_sqr);
-						//feedback = 0.8;
+						feedback = 0.0;
 						//feedback = max(0., feedback - worldSpaceDist);
-						feedback = 0;
 
 						if (frame == 0) feedback = 0;
 						vec3 c = feedback * c0.xyz + (1 - feedback) * c1.xyz;
-
-						c = c1.xyz; // HACK: output only the new color!!!!!!!!!!!!!!!!!!!
-
-						
-						//c = vec3(feedback);
-
 						imageStore(abuffer_image, ivec3(gl_FragCoord.xy, 1 - abuffer_read_layer), vec4(c, z1));
 
-
+						c = c / (vec3(1.) + c);
 						col = vec4(pow(c, vec3(1. / 2.2)), 1.);
-
-						if (true) {
-							ivec2 tileSize = imageSize(abuffer_image).xy / imageSize(minzbuffer).xy;
-							ivec2 jumpReadCoord = ivec2(gl_FragCoord.xy) / tileSize;
-							float z = uintBitsToFloat(imageLoad(minzbuffer, jumpReadCoord).x);
-							//col.gb = vec2(.5 + .5*sin(z*50.));
-							col.gb = vec2(pow(z/1., 2.));
-						}
 					}
 				)
 			);
@@ -349,7 +334,7 @@ int main() {
 		swapBuffers();
 
 		std::swap(cameras[0], cameras[1]);
-		//frame++; // HACK: don't advance frames!!!!!
+		frame++;
 	}
 	return 0;
 }
