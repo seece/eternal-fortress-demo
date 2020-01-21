@@ -118,12 +118,55 @@ vec2 unpackJitter(float d)
     return a - vec2(0.5);
 }
 
+vec2 shadowMarch(inout vec3 p, vec3 rd, int num_iters, float maxDist=10.) {
+    vec3 ro = p;
+    int i;
+    float omega = 1.3;
+    float t = 0.;
+    int mat;
+    float last_d = 0.;
+    float step = 0.;
+    bool relax = true;
+    float closest = 1e9;
+
+    for (i = 0; i < num_iters; i++) {
+        float d = scene(ro + t * rd, mat);
+
+        bool sorFail = omega > 1. && (d + last_d) < step;
+        if (sorFail) {
+            step -= omega * step;
+            omega = 1.;
+        } else {
+            step = d * omega;
+        }
+
+        float closest = min(closest, d);
+
+        last_d = d;
+
+        if (d < t * 1e-5) {
+            break;
+        }
+
+        if (t >= maxDist) {
+            break;
+        }
+
+        t += step;
+    }
+
+    p = ro + t * rd;
+    return vec2(t, closest);
+}
+
 // Raymarching loop based on techniques of Keinert et al. "Enhanced Sphere Tracing", 2014.
 float march(inout vec3 p, vec3 rd, out int material, int num_iters, float maxDist=1e9) {
     vec3 ro = p;
     int i;
     float omega = 1.3;
     float t = 0.;
+    float candidate_error = 1e9;
+    float candidate_t = t;
     int mat;
     float last_d = 0.;
     float step = 0.;
@@ -142,6 +185,12 @@ float march(inout vec3 p, vec3 rd, out int material, int num_iters, float maxDis
         }
 
         last_d = d;
+        float error = d / t;
+
+        if (!sorFail && error < candidate_error) {
+            candidate_t = t;
+            candidate_error = error;
+        }
 
         if (d < t * 1e-5) {
             material = mat;
@@ -155,6 +204,11 @@ float march(inout vec3 p, vec3 rd, out int material, int num_iters, float maxDis
         t += step;
     }
 
+    if (t >= maxDist) {
+        return t;
+    }
+
+    t = candidate_t;
     p = ro + t * rd;
 
     // See "Enhanced Sphere Tracing" section 3.4. and
@@ -195,7 +249,7 @@ void main() {
         getCameraProjection(cam, uv, p, dir);
 
         int hitmat = MATERIAL_SKY;
-        float travel = march(p, dir, hitmat, 50);
+        float travel = march(p, dir, hitmat, 200);
 
         vec3 color;
         vec3 skyColor = vec3(0., 0.2*abs(dir.y), 0.5 - dir.y);
@@ -212,11 +266,10 @@ void main() {
                 vec3 to_camera = normalize(cam.pos - p);
                 vec3 to_light = normalize(vec3(-0.5, -1.0, 0.7));
 
-                int shadowMat = MATERIAL_SKY;
                 vec3 shadowRayPos = p+to_camera*(0.001 + 0.0009 * rand());
                 const float maxShadowDist = 20.;
-                float lightDist = march(shadowRayPos, to_light, shadowMat, 60, maxShadowDist);
-                float sun = min(lightDist, maxShadowDist) / maxShadowDist;
+                vec2 shadowResult = shadowMarch(shadowRayPos, to_light, 60, maxShadowDist);
+                float sun = min(shadowResult.x, maxShadowDist) / maxShadowDist;
 
                 float shine = max(0., dot(normal, to_light));
                 vec3 base = vec3(1.); //vec3(0.5) + .5*sin(vec3(p) * 50.);
