@@ -322,7 +322,7 @@ int main() {
 		swapBuffers();
 
 		std::swap(cameras[0], cameras[1]);
-		frame++;
+		//frame++; // DEBUG HACK: don't advance frames!!!!!!!!!
 	}
 	return 0;
 }

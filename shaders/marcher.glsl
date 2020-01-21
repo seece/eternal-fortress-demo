@@ -118,26 +118,39 @@ vec2 unpackJitter(float d)
     return a - vec2(0.5);
 }
 
-float march(inout vec3 p, vec3 dir, out int material, int num_iters, float maxDist=1e9) {
-    vec3 startPos = p;
+float march(inout vec3 p, vec3 rd, out int material, int num_iters, float maxDist=1e9) {
+    vec3 ro = p;
     int i;
-    float travel=0.;
+    float t = 0.;
 
-    for (i=0;i<num_iters;i++) {
+    for (i = 0; i < num_iters; i++) {
         int mat;
+
+        p = ro + t * rd;
         float d = scene(p, mat);
-        if (d < 1e-5) {
+        if (d < t * 1e-5) {
             material = mat;
             break;
         }
 
-        p += d * dir;
-        travel = length(p - startPos);
-        if (travel > maxDist)
+        if (t >= maxDist) {
             break;
+        }
+
+        t += d;
     }
 
-    return travel;
+    // See "Enhanced Sphere Tracing" section 3.4. and
+    // section 3.1.1 in "Efficient Antialiased Rendering of 3-D Linear Fractals"
+    for (int i = 0; i < 3; i++) {
+        //float e = t*((2.0 * sin((uFOV/360.0)*2.0*3.1416*0.5)) / iResolution.x);
+        const float uFOV = 90.; // TODO: use real fov
+        float e = t*(2.0 * sin(uFOV*0.00873) / imageSize(samplebuffer).x);
+        t += scene(ro + t*rd, material) - e;
+    }
+
+
+    return t;
 
 }
 
