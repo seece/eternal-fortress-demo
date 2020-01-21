@@ -118,16 +118,31 @@ vec2 unpackJitter(float d)
     return a - vec2(0.5);
 }
 
+// Raymarching loop based on techniques of Keinert et al. "Enhanced Sphere Tracing", 2014.
 float march(inout vec3 p, vec3 rd, out int material, int num_iters, float maxDist=1e9) {
     vec3 ro = p;
     int i;
+    float omega = 1.3;
     float t = 0.;
+    int mat;
+    float last_d = 0.;
+    float step = 0.;
+    bool relax = true;
+    material = MATERIAL_SKY;
 
     for (i = 0; i < num_iters; i++) {
-        int mat;
+        float d = scene(ro + t * rd, mat);
 
-        p = ro + t * rd;
-        float d = scene(p, mat);
+        bool sorFail = omega > 1. && (d + last_d) < step;
+        if (sorFail) {
+            step -= omega * step;
+            omega = 1.;
+        } else {
+            step = d * omega;
+        }
+
+        last_d = d;
+
         if (d < t * 1e-5) {
             material = mat;
             break;
@@ -137,16 +152,19 @@ float march(inout vec3 p, vec3 rd, out int material, int num_iters, float maxDis
             break;
         }
 
-        t += d;
+        t += step;
     }
+
+    p = ro + t * rd;
 
     // See "Enhanced Sphere Tracing" section 3.4. and
     // section 3.1.1 in "Efficient Antialiased Rendering of 3-D Linear Fractals"
     for (int i = 0; i < 3; i++) {
         //float e = t*((2.0 * sin((uFOV/360.0)*2.0*3.1416*0.5)) / iResolution.x);
         const float uFOV = 90.; // TODO: use real fov
+        int temp;
         float e = t*(2.0 * sin(uFOV*0.00873) / imageSize(samplebuffer).x);
-        t += scene(ro + t*rd, material) - e;
+        t += scene(ro + t*rd, temp) - e;
     }
 
 
@@ -177,7 +195,7 @@ void main() {
         getCameraProjection(cam, uv, p, dir);
 
         int hitmat = MATERIAL_SKY;
-        float travel = march(p, dir, hitmat, 300);
+        float travel = march(p, dir, hitmat, 50);
 
         vec3 color;
         vec3 skyColor = vec3(0., 0.2*abs(dir.y), 0.5 - dir.y);
