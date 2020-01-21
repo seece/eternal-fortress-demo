@@ -32,7 +32,6 @@ uniform int frame;
 uniform float secs;
 
 layout(r32f) uniform image2D zbuffer;
-layout(r32ui) uniform uimage2D minzbuffer;
 layout(rgba16f) uniform image2DArray samplebuffer;
 
 struct CameraParams {

@@ -16,9 +16,6 @@ struct CameraParameters {
 const int screenw = 1024, screenh = 1024;
 static constexpr int SAMPLES_PER_PIXEL = 1;
 static constexpr GLuint SAMPLE_BUFFER_TYPE = GL_RGBA16F;
-static constexpr int MINZ_BUFFER_RESOLUTION = 128;
-static constexpr GLuint MINZ_BUFFER_TYPE = GL_R32UI;
-
 
 static void cameraPath(float t, CameraParameters& cam)
 {
@@ -51,16 +48,12 @@ int main() {
 	Texture<GL_TEXTURE_2D_ARRAY> abuffer;
 	Texture<GL_TEXTURE_2D> gbuffer;
 	Texture<GL_TEXTURE_2D> zbuffer;
-	Texture<GL_TEXTURE_2D> minzbuffer;
 	Texture<GL_TEXTURE_2D_ARRAY> samplebuffer;
 	Buffer cameraData;
 
 	setWrapToClamp(abuffer);
 	setWrapToClamp(gbuffer);
 	setWrapToClamp(zbuffer);
-	setWrapToClamp(minzbuffer);
-	glTextureParameteri(minzbuffer, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-	glTextureParameteri(minzbuffer, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 	setWrapToClamp(samplebuffer);
 
 
@@ -69,7 +62,6 @@ int main() {
 	glTextureStorage3D(abuffer, 1, GL_RGBA32F, screenw, screenh, 2);
 	glTextureStorage2D(gbuffer, 1, GL_RGBA32F, renderw, renderh);
 	glTextureStorage2D(zbuffer, 1, GL_R32F, renderw, renderh);
-	glTextureStorage2D(minzbuffer, 1, MINZ_BUFFER_TYPE, MINZ_BUFFER_RESOLUTION, MINZ_BUFFER_RESOLUTION);
 	glTextureStorage3D(samplebuffer, 1, SAMPLE_BUFFER_TYPE, renderw, renderh, SAMPLES_PER_PIXEL);
 
 	int abuffer_read_layer = 0, frame = 0;
@@ -84,7 +76,6 @@ int main() {
 		float secs = frame / 60.f;
 		cameraPath(secs, cameras[1]);
 		glNamedBufferSubData(cameraData, 0, sizeof(cameras), &cameras);
-		glClearTexImage(minzbuffer, 0, GL_RED_INTEGER, GL_UNSIGNED_INT, NULL);
 
 		if (!march)
 			march = createProgram("shaders/marcher.glsl");
@@ -96,7 +87,6 @@ int main() {
 		bindBuffer("cameraArray", cameraData);
 		//bindImage("gbuffer", 0, gbuffer, GL_WRITE_ONLY, GL_RGBA32F);
 		bindImage("zbuffer", 0, zbuffer, GL_WRITE_ONLY, GL_R32F);
-		bindImage("minzbuffer", 0, minzbuffer, GL_READ_WRITE, MINZ_BUFFER_TYPE);
 		bindImage("samplebuffer", 0, samplebuffer, GL_WRITE_ONLY, SAMPLE_BUFFER_TYPE);
 		// the arguments of dispatch are the numbers of thread blocks in each direction;
 		// since our local size is 16x16x1, we'll get 1024x1024x1 threads total, just enough
@@ -238,7 +228,6 @@ int main() {
 					uniform sampler2D gbuffer;
 					uniform sampler2D zbuffer;
 					uniform sampler2DArray abuffer;
-					layout(r32ui) uniform uimage2D minzbuffer;
 					layout(rgba32f) uniform image2DArray abuffer_image;
 					out vec4 col;
 					uniform int abuffer_read_layer;
@@ -312,7 +301,6 @@ int main() {
 
 		bindTexture("gbuffer", gbuffer);
 		bindTexture("zbuffer", zbuffer);
-		bindImage("minzbuffer", 0, minzbuffer, GL_READ_WRITE, MINZ_BUFFER_TYPE);
 		bindTexture("abuffer", abuffer);
 		bindImage("abuffer_image", 0, abuffer, GL_WRITE_ONLY, GL_RGBA32F);
 		glUniform1i("abuffer_read_layer", abuffer_read_layer);
