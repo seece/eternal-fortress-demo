@@ -160,7 +160,7 @@ vec2 shadowMarch(inout vec3 p, vec3 rd, int num_iters, float maxDist=10.) {
 }
 
 // Raymarching loop based on techniques of Keinert et al. "Enhanced Sphere Tracing", 2014.
-float march(inout vec3 p, vec3 rd, out int material, int num_iters, float maxDist=1e9) {
+float march(inout vec3 p, vec3 rd, out int material, int num_iters, float maxDist=200.) {
     vec3 ro = p;
     int i;
     float omega = 1.3;
@@ -171,7 +171,7 @@ float march(inout vec3 p, vec3 rd, out int material, int num_iters, float maxDis
     float last_d = 0.;
     float step = 0.;
     bool relax = true;
-    material = MATERIAL_SKY;
+    material = MATERIAL_OTHER;
 
     for (i = 0; i < num_iters; i++) {
         float d = scene(ro + t * rd, mat);
@@ -198,6 +198,7 @@ float march(inout vec3 p, vec3 rd, out int material, int num_iters, float maxDis
         }
 
         if (t >= maxDist) {
+            material = MATERIAL_SKY;
             break;
         }
 
@@ -206,6 +207,12 @@ float march(inout vec3 p, vec3 rd, out int material, int num_iters, float maxDis
 
     if (t >= maxDist) {
         return t;
+    }
+
+    const float pixelSize = 0.005; // TODO Use real pixel size
+
+    if (candidate_error > pixelSize) {
+        material = MATERIAL_SKY;
     }
 
     t = candidate_t;
@@ -249,7 +256,7 @@ void main() {
         getCameraProjection(cam, uv, p, dir);
 
         int hitmat = MATERIAL_SKY;
-        float travel = march(p, dir, hitmat, 200);
+        float travel = march(p, dir, hitmat, 300);
 
         vec3 color;
         vec3 skyColor = vec3(0., 0.2*abs(dir.y), 0.5 - dir.y);

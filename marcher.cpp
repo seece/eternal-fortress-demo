@@ -285,7 +285,7 @@ int main() {
 						float unbiased_weight_sqr = unbiased_weight * unbiased_weight;
 						float feedback = mix(0.0, 1.0, unbiased_weight_sqr);
 						feedback = 0.0;
-						//feedback = max(0., feedback - worldSpaceDist);
+						//feedback = max(0., feedback - worldSpaceDist*100.);
 
 						if (frame == 0) feedback = 0;
 						vec3 c = feedback * c0.xyz + (1 - feedback) * c1.xyz;
@@ -322,7 +322,7 @@ int main() {
 		swapBuffers();
 
 		std::swap(cameras[0], cameras[1]);
-		//frame++; // DEBUG HACK: don't advance frames!!!!!!!!!
+		frame++;
 	}
 	return 0;
 }
