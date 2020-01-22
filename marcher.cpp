@@ -4,9 +4,9 @@
 
 struct CameraParameters {
 	vec3 pos;
-	float padding;
+	float padding0;
 	vec3 dir;
-	float zoom;
+	float padding1;
 	vec3 up;
 	float padding2;
 	vec3 right;
@@ -22,9 +22,16 @@ static void cameraPath(float t, CameraParameters& cam)
 	float tt = t * 0.2f;
 	cam.pos = vec3(0.5f*sin(tt), 0.f, 6.f + 0.5f*cos(tt));
 	cam.dir = normalize(vec3(0.5f*cos(tt*0.5f), 0.2f*sin(tt), -1.f));
-	cam.zoom = 0.9f;
 	cam.right = normalize(cross(cam.dir, vec3(0.f, 1.f, 0.f)));
 	cam.up = cross(cam.dir, cam.right);
+	
+	float nearplane = 0.1f;
+	float zoom = 8.0f;
+	cam.dir *= nearplane;
+	cam.right *= nearplane;
+	cam.right /= zoom;
+	cam.up *= nearplane;
+	cam.up /= zoom;
 }
 
 static void setWrapToClamp(GLuint tex) {
@@ -74,7 +81,7 @@ int main() {
 		// timestamp objects make gl queries at those locations; you can substract them to get the time
 		TimeStamp start;
 		float secs = frame / 60.f;
-		cameraPath(secs, cameras[1]);
+		cameraPath(0., cameras[1]);
 		glNamedBufferSubData(cameraData, 0, sizeof(cameras), &cameras);
 
 		if (!march)
@@ -135,6 +142,7 @@ int main() {
 									
 									vec2 sampleCoord = vec2(x, y) + jitter;
 									float weight = max(0., 1. - length(sampleCoord));
+									//float weight = exp(-2.29 * pow(length(sampleCoord), 2.)); // PRMan Gaussian fit to Blackman-Harris 3.3
 									accum += weight * c.rgb;
 									totalWeight += weight;
 								}
@@ -174,9 +182,9 @@ int main() {
 					GLSL(460,
 					struct CameraParams {
 						vec3 pos;
-						float padding;
+						float padding0;
 						vec3 dir;
-						float zoom;
+						float padding1;
 						vec3 up;
 						float padding2;
 						vec3 right;
@@ -206,19 +214,20 @@ int main() {
 					}
 
 					void getCameraProjection(CameraParams cam, vec2 uv, out vec3 outPos, out vec3 outDir) {
-						uv /= cam.zoom;
-						// vec3 right = cross(cam.dir, vec3(0., 1., 0.));
-						// vec3 up = cross(cam.dir, right);
 						outPos = cam.pos + cam.dir + (uv.x - 0.5) * cam.right + (uv.y - 0.5) * cam.up;
 						outDir = normalize(outPos - cam.pos);
 					}
 
 					vec2 reprojectPoint(CameraParams cam, vec3 p) {
 						vec3 op = p - cam.pos;
-						float z = dot(cam.dir, op);
-						vec3 pp = op / z;
-						vec2 plane = vec2(dot(cam.right, pp), dot(cam.up, pp));
-						return cam.zoom * (plane + vec2(0.5));
+						float n = length(cam.dir);
+						float z = dot(cam.dir, op) / n;
+						vec3 pp = (op * n) / z;
+						vec2 plane = vec2(
+							dot(pp, cam.right) / dot(cam.right, cam.right),
+							dot(pp, cam.up) / dot(cam.up, cam.up)
+						);
+						return plane + vec2(0.5);
 					}
 
 					float rgb2Luminance(vec3 rgb) {
@@ -261,14 +270,15 @@ int main() {
 						vec3 rayStartPos1, rayDir1;
 						vec2 uv1 = vec2(gl_FragCoord.xy) / 1024.;
 						getCameraProjection(cameras[1], uv1, rayStartPos1, rayDir1);
-						vec3 world1 = cameras[1].pos + rayDir1 * z1;
+						vec3 world1 = rayStartPos1 + rayDir1 * z1;
+						vec2 uv1b = reprojectPoint(cameras[1], world1);
 
 						vec2 uv0 = reprojectPoint(cameras[0], world1);
 						vec4 c0 = texture(abuffer, vec3(uv0, abuffer_read_layer));
 						float z0 = c0.w; // NOTE: Linearly interpolated depth.
 						vec3 rayStartPos0, rayDir0;
 						getCameraProjection(cameras[0], uv0, rayStartPos0, rayDir0);
-						vec3 world0 = cameras[0].pos + rayDir0 * z0;
+						vec3 world0 = rayStartPos0 + rayDir0 * z0;
 
 						float worldSpaceDist = length(world0 - world1);
 
@@ -284,7 +294,8 @@ int main() {
 						float unbiased_weight = 1.0 - unbiased_diff;
 						float unbiased_weight_sqr = unbiased_weight * unbiased_weight;
 						float feedback = mix(0.0, 1.0, unbiased_weight_sqr);
-						feedback = 0.0;
+						//feedback = 0.;
+						feedback = 1. - 1./frame;
 						//feedback = max(0., feedback - worldSpaceDist*100.);
 
 						if (frame == 0) feedback = 0;
@@ -293,6 +304,8 @@ int main() {
 
 						c = c / (vec3(1.) + c);
 						col = vec4(pow(c, vec3(1. / 2.2)), 1.);
+
+						//col = vec4(vec3(length(uv1 - uv1b)), 1.0);
 					}
 				)
 			);

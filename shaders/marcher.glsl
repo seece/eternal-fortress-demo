@@ -36,9 +36,9 @@ layout(rgba16f) uniform image2DArray samplebuffer;
 
 struct CameraParams {
     vec3 pos;
-	float padding;
+	float padding0;
 	vec3 dir;
-	float zoom;
+	float padding1;
 	vec3 up;
 	float padding2;
 	vec3 right;
@@ -61,7 +61,7 @@ const float MR2 = 0.01;
 vec4 mbox_scalevec = vec4(SCALE, SCALE, SCALE, abs(SCALE)) / MR2;
 float mbox_C1 = abs(SCALE-1.0);
 
-float mandelbox(vec3 position, int iters=7) {
+float mandelbox(vec3 position, int iters=9) {
     float mbox_C2 = pow(abs(SCALE), float(1-iters));
 	// distance estimate
 	vec4 p = vec4(position.xyz, 1.0), p0 = vec4(position.xyz, 1.0);  // p.w is knighty's DEfactor
@@ -79,7 +79,7 @@ float mandelbox(vec3 position, int iters=7) {
 
 float scene(vec3 p, out int material, float pixelConeSize=1.) {
 	material = MATERIAL_OTHER;
-	return mandelbox(p, 7);
+	return mandelbox(p);
 }
 
 vec3 evalnormal(vec3 p) {
@@ -93,9 +93,6 @@ vec3 evalnormal(vec3 p) {
 }
 
 void getCameraProjection(CameraParams cam, vec2 uv, out vec3 outPos, out vec3 outDir) {
-	uv /= cam.zoom;
-	// vec3 right = cross(cam.dir, vec3(0., 1., 0.));
-	// vec3 up = cross(cam.dir, right);
 	outPos = cam.pos + cam.dir + (uv.x - 0.5) * cam.right + (uv.y - 0.5) * cam.up;
 	outDir = normalize(outPos - cam.pos);
 }
@@ -235,8 +232,7 @@ float march(inout vec3 p, vec3 rd, out int material, int num_iters, float maxDis
 
 void main() {
     uint seed = uint(gl_GlobalInvocationID.x) + uint(gl_GlobalInvocationID.y);
-    srand(seed, seed, seed);
-    seed = uint(rand()*9999 + frame);
+    srand(seed, seed+frame, seed*frame); // TODO: better RNG
     ivec2 res = imageSize(zbuffer).xy;
     int samplesPerPixel = imageSize(samplebuffer).z;
 
@@ -256,13 +252,13 @@ void main() {
         getCameraProjection(cam, uv, p, dir);
 
         int hitmat = MATERIAL_SKY;
-        float travel = march(p, dir, hitmat, 300);
+        float zdepth = march(p, dir, hitmat, 300);
+        float distance = length(p - cam.pos);
 
         vec3 color;
         vec3 skyColor = vec3(0., 0.2*abs(dir.y), 0.5 - dir.y);
         //if (hitmat == MATERIAL_SKY && travel < 100.) { hitmat = MATERIAL_OTHER; }
 
-        float depth = length(p - cam.pos);
         switch (hitmat) {
             case MATERIAL_SKY:
                 color = skyColor;
@@ -274,7 +270,7 @@ void main() {
                 vec3 to_light = normalize(vec3(-0.5, -1.0, 0.7));
 
                 vec3 shadowRayPos = p+to_camera*(0.001 + 0.0009 * rand());
-                const float maxShadowDist = 20.;
+                const float maxShadowDist = 10.;
                 vec2 shadowResult = shadowMarch(shadowRayPos, to_light, 60, maxShadowDist);
                 float sun = min(shadowResult.x, maxShadowDist) / maxShadowDist;
 
@@ -282,13 +278,13 @@ void main() {
                 vec3 base = vec3(1.); //vec3(0.5) + .5*sin(vec3(p) * 50.);
                 color = base * sun * vec3(shine);
                 color = clamp(color, vec3(0.), vec3(10.));
-                float fog = pow(min(1., depth / 10.), 4.0);
+                float fog = pow(min(1., distance / 10.), 4.0);
                 color = mix(color, vec3(0.5, 0., 0.), fog);
                 break;
         }
 
         accum += color;
-        minDepth = min(minDepth, depth);
+        minDepth = min(minDepth, zdepth);
 
         imageStore(samplebuffer, ivec3(gl_GlobalInvocationID.xy, sample_id), vec4(color, packJitter(jitter)));
     }
