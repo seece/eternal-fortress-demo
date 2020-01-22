@@ -53,6 +53,8 @@ vec2 getThreadUV(uvec3 id) {
 	return vec2(id.xy) / 1024.0;
 }
 
+float PIXEL_RADIUS;
+
 // mandelbox distance function by Rrola (Buddhi's distance estimation)
 // http://www.fractalforums.com/index.php?topic=2785.msg21412#msg21412
 
@@ -194,8 +196,7 @@ float march(inout vec3 p, vec3 rd, out int material, int num_iters, float maxDis
             break;
         }
 
-        if (t >= maxDist) {
-            material = MATERIAL_SKY;
+        if (!sorFail && error < PIXEL_RADIUS || t >= maxDist) {
             break;
         }
 
@@ -203,13 +204,15 @@ float march(inout vec3 p, vec3 rd, out int material, int num_iters, float maxDis
     }
 
     if (t >= maxDist) {
+        material = MATERIAL_SKY;
         return t;
     }
 
-    const float pixelSize = 0.005; // TODO Use real pixel size
-
-    if (candidate_error > pixelSize) {
+    // Write out sky color if snapping the hit point to nearest geometry would introduce too screen
+    // space error.
+    if (i == num_iters && candidate_error > PIXEL_RADIUS) {
         material = MATERIAL_SKY;
+        return t;
     }
 
     t = candidate_t;
@@ -217,13 +220,13 @@ float march(inout vec3 p, vec3 rd, out int material, int num_iters, float maxDis
 
     // See "Enhanced Sphere Tracing" section 3.4. and
     // section 3.1.1 in "Efficient Antialiased Rendering of 3-D Linear Fractals"
+    /*
     for (int i = 0; i < 3; i++) {
-        //float e = t*((2.0 * sin((uFOV/360.0)*2.0*3.1416*0.5)) / iResolution.x);
-        const float uFOV = 90.; // TODO: use real fov
         int temp;
-        float e = t*(2.0 * sin(uFOV*0.00873) / imageSize(samplebuffer).x);
+        float e = t * 2. * PIXEL_RADIUS;
         t += scene(ro + t*rd, temp) - e;
     }
+    */
 
 
     return t;
@@ -231,9 +234,11 @@ float march(inout vec3 p, vec3 rd, out int material, int num_iters, float maxDis
 }
 
 void main() {
-    uint seed = uint(gl_GlobalInvocationID.x) + uint(gl_GlobalInvocationID.y);
-    srand(seed, seed+frame, seed*frame); // TODO: better RNG
+    srand(frame, uint(gl_GlobalInvocationID.x), uint(gl_GlobalInvocationID.y));
+    jenkins_mix();
+    jenkins_mix();
     ivec2 res = imageSize(zbuffer).xy;
+    PIXEL_RADIUS = .5 * length(cameras[1].right) / res.x;
     int samplesPerPixel = imageSize(samplebuffer).z;
 
     float minDepth = 1e20;
