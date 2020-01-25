@@ -55,6 +55,11 @@ vec2 getThreadUV(uvec3 id) {
 
 float PIXEL_RADIUS;
 
+// This factor how many pixel radiuses of screen space error do we allow
+// in the "near geometry snapping" at the end of "march" loop. Without it
+// the skybox color leaks through with low grazing angles.
+const float SNAP_INFLATE_FACTOR = 3.;
+
 // mandelbox distance function by Rrola (Buddhi's distance estimation)
 // http://www.fractalforums.com/index.php?topic=2785.msg21412#msg21412
 
@@ -63,7 +68,7 @@ const float MR2 = 0.01;
 vec4 mbox_scalevec = vec4(SCALE, SCALE, SCALE, abs(SCALE)) / MR2;
 float mbox_C1 = abs(SCALE-1.0);
 
-float mandelbox(vec3 position, int iters=9) {
+float mandelbox(vec3 position, int iters=7) {
     float mbox_C2 = pow(abs(SCALE), float(1-iters));
 	// distance estimate
 	vec4 p = vec4(position.xyz, 1.0), p0 = vec4(position.xyz, 1.0);  // p.w is knighty's DEfactor
@@ -81,7 +86,7 @@ float mandelbox(vec3 position, int iters=9) {
 
 float scene(vec3 p, out int material, float pixelConeSize=1.) {
 	material = MATERIAL_OTHER;
-	return mandelbox(p);
+	return mandelbox(p, 7);
 }
 
 vec3 evalnormal(vec3 p) {
@@ -191,12 +196,8 @@ float march(inout vec3 p, vec3 rd, out int material, int num_iters, float maxDis
             candidate_error = error;
         }
 
-        if (d < t * 1e-5) {
-            material = mat;
-            break;
-        }
-
         if (!sorFail && error < PIXEL_RADIUS || t >= maxDist) {
+            material = mat;
             break;
         }
 
@@ -208,9 +209,8 @@ float march(inout vec3 p, vec3 rd, out int material, int num_iters, float maxDis
         return t;
     }
 
-    // Write out sky color if snapping the hit point to nearest geometry would introduce too screen
-    // space error.
-    if (i == num_iters && candidate_error > PIXEL_RADIUS) {
+    // Write out sky color if snapping the hit point to nearest geometry would introduce too much screen space error.
+    if (i == num_iters && candidate_error > PIXEL_RADIUS * SNAP_INFLATE_FACTOR) {
         material = MATERIAL_SKY;
         return t;
     }
@@ -218,15 +218,14 @@ float march(inout vec3 p, vec3 rd, out int material, int num_iters, float maxDis
     t = candidate_t;
     p = ro + t * rd;
 
+
     // See "Enhanced Sphere Tracing" section 3.4. and
     // section 3.1.1 in "Efficient Antialiased Rendering of 3-D Linear Fractals"
-    /*
     for (int i = 0; i < 3; i++) {
         int temp;
         float e = t * 2. * PIXEL_RADIUS;
         t += scene(ro + t*rd, temp) - e;
     }
-    */
 
 
     return t;
@@ -247,6 +246,8 @@ void main() {
     for (int sample_id=0; sample_id < samplesPerPixel; sample_id++)
     {
         vec2 jitter = vec2(rand(), rand()) - vec2(0.5, 0.5);
+        vec2 absjitter = abs(jitter);
+        //MAX_SNAP_RADIUS = PIXEL_RADIUS * ((max(absjitter.x, absjitter.y) - 0.5)/0.5);
 
         vec2 uv = getThreadUV(gl_GlobalInvocationID);
         jitter /= imageSize(zbuffer).xy;
@@ -257,7 +258,7 @@ void main() {
         getCameraProjection(cam, uv, p, dir);
 
         int hitmat = MATERIAL_SKY;
-        float zdepth = march(p, dir, hitmat, 300);
+        float zdepth = march(p, dir, hitmat, 400);
         float distance = length(p - cam.pos);
 
         vec3 color;
@@ -274,10 +275,11 @@ void main() {
                 vec3 to_camera = normalize(cam.pos - p);
                 vec3 to_light = normalize(vec3(-0.5, -1.0, 0.7));
 
-                vec3 shadowRayPos = p+to_camera*(0.001 + 0.0009 * rand());
+                vec3 shadowRayPos = p + to_camera * 5.* (PIXEL_RADIUS/zdepth);
                 const float maxShadowDist = 10.;
                 vec2 shadowResult = shadowMarch(shadowRayPos, to_light, 60, maxShadowDist);
                 float sun = min(shadowResult.x, maxShadowDist) / maxShadowDist;
+                sun = pow(sun, 2.);
 
                 float shine = max(0., dot(normal, to_light));
                 vec3 base = vec3(1.); //vec3(0.5) + .5*sin(vec3(p) * 50.);

@@ -20,13 +20,14 @@ static constexpr GLuint SAMPLE_BUFFER_TYPE = GL_RGBA16F;
 static void cameraPath(float t, CameraParameters& cam)
 {
 	float tt = t * 0.2f;
-	cam.pos = vec3(0.5f*sin(tt), 0.f, 6.f + 0.5f*cos(tt));
+	//cam.pos = vec3(0.5f*sin(tt), 0.f, 6.f + 0.5f*cos(tt));
+	cam.pos = vec3(1., 0., 4.f + 2.0f*cos(tt));
 	cam.dir = normalize(vec3(0.5f*cos(tt*0.5f), 0.2f*sin(tt), -1.f));
 	cam.right = normalize(cross(cam.dir, vec3(0.f, 1.f, 0.f)));
 	cam.up = cross(cam.dir, cam.right);
 	
 	float nearplane = 0.1f;
-	float zoom = 8.0f;
+	float zoom = 1.0f;
 	cam.dir *= nearplane;
 	cam.right *= nearplane;
 	cam.right /= zoom;
@@ -81,7 +82,7 @@ int main() {
 		// timestamp objects make gl queries at those locations; you can substract them to get the time
 		TimeStamp start;
 		float secs = frame / 60.f;
-		cameraPath(0., cameras[1]);
+		cameraPath(secs, cameras[1]);
 		glNamedBufferSubData(cameraData, 0, sizeof(cameras), &cameras);
 
 		if (!march)
@@ -246,13 +247,13 @@ int main() {
 						vec4 c1 = texelFetch(gbuffer, ivec2(gl_FragCoord.xy), 0);
 						float z1 = texelFetch(zbuffer, ivec2(gl_FragCoord.xy), 0).x;
 						const ivec2[8] deltas = {
-							ivec2(-1, -1),
-							ivec2(0, -1),
-							ivec2(1, -1),
-							ivec2(-1,  0),
+							ivec2(0, -1),  // direct neighbors
+							ivec2(-1, 0),
 							ivec2(1,  0),
-							ivec2(-1,  1),
 							ivec2(0,  1),
+							ivec2(-1, -1), // diagonals
+							ivec2(1, -1),
+							ivec2(-1, 1),
 							ivec2(1,  1),
 						};
 
@@ -266,12 +267,14 @@ int main() {
 							cavg += cn.rgb;
 						}
 						cavg /= 9.;
+						// compute also cross average
+
+						ivec2 res = textureSize(gbuffer, 0).xy;
 
 						vec3 rayStartPos1, rayDir1;
-						vec2 uv1 = vec2(gl_FragCoord.xy) / 1024.;
+						vec2 uv1 = vec2(gl_FragCoord.xy) / res;
 						getCameraProjection(cameras[1], uv1, rayStartPos1, rayDir1);
 						vec3 world1 = rayStartPos1 + rayDir1 * z1;
-						vec2 uv1b = reprojectPoint(cameras[1], world1);
 
 						vec2 uv0 = reprojectPoint(cameras[0], world1);
 						vec4 c0 = texture(abuffer, vec3(uv0, abuffer_read_layer));
@@ -281,9 +284,10 @@ int main() {
 						vec3 world0 = rayStartPos0 + rayDir0 * z0;
 
 						float worldSpaceDist = length(world0 - world1);
+						float screenSpaceDist = length((uv1 - uv0) * res);
 
 						//c0.rgb = clamp(c0.rgb, minbox, maxbox);
-						//c0.rgb = clip_aabb(minbox, maxbox, vec4(clamp(cavg, minbox, maxbox), 0.), vec4(c0.rgb, 0.)).rgb;
+						c0.rgb = clip_aabb(minbox, maxbox, vec4(clamp(cavg, minbox, maxbox), 0.), vec4(c0.rgb, 0.)).rgb;
 
 						// feedback weight from unbiased luminance diff (t.lottes)
 						// https://github.com/playdeadgames/temporal/blob/4795aa0007d464371abe60b7b28a1cf893a4e349/Assets/Shaders/TemporalReprojection.shader#L313
@@ -294,8 +298,9 @@ int main() {
 						float unbiased_weight = 1.0 - unbiased_diff;
 						float unbiased_weight_sqr = unbiased_weight * unbiased_weight;
 						float feedback = mix(0.0, 1.0, unbiased_weight_sqr);
-						//feedback = 0.;
-						feedback = 1. - 1./frame;
+						feedback = clamp(0.99 - screenSpaceDist/10., 0., 1.);
+						feedback = 0.;
+						//feedback = 1. - 1./frame;
 						//feedback = max(0., feedback - worldSpaceDist*100.);
 
 						if (frame == 0) feedback = 0;
@@ -305,7 +310,7 @@ int main() {
 						c = c / (vec3(1.) + c);
 						col = vec4(pow(c, vec3(1. / 2.2)), 1.);
 
-						//col = vec4(vec3(length(uv1 - uv1b)), 1.0);
+						//col = vec4(vec3(screenSpaceDist/100.), 0.);
 					}
 				)
 			);
