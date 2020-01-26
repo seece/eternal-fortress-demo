@@ -6,7 +6,7 @@ struct CameraParameters {
 	vec3 pos;
 	float padding0;
 	vec3 dir;
-	float padding1;
+	float nearplane;
 	vec3 up;
 	float padding2;
 	vec3 right;
@@ -14,14 +14,14 @@ struct CameraParameters {
 };
 
 const int screenw = 1024, screenh = 1024;
-static constexpr int SAMPLES_PER_PIXEL = 1;
+static constexpr int SAMPLES_PER_PIXEL = 2;
 static constexpr GLuint SAMPLE_BUFFER_TYPE = GL_RGBA16F;
 
 static void cameraPath(float t, CameraParameters& cam)
 {
 	float tt = t * 0.2f;
 	//cam.pos = vec3(0.5f*sin(tt), 0.f, 6.f + 0.5f*cos(tt));
-	cam.pos = vec3(1., 0., 4.f + 2.0f*cos(tt));
+	cam.pos = vec3(1., 0., 4.f + 2.5f*cos(tt));
 	cam.dir = normalize(vec3(0.5f*cos(tt*0.5f), 0.2f*sin(tt), -1.f));
 	cam.right = normalize(cross(cam.dir, vec3(0.f, 1.f, 0.f)));
 	cam.up = cross(cam.dir, cam.right);
@@ -33,6 +33,8 @@ static void cameraPath(float t, CameraParameters& cam)
 	cam.right /= zoom;
 	cam.up *= nearplane;
 	cam.up /= zoom;
+
+	cam.nearplane = length(cam.dir);
 }
 
 static void setWrapToClamp(GLuint tex) {
@@ -82,7 +84,7 @@ int main() {
 		// timestamp objects make gl queries at those locations; you can substract them to get the time
 		TimeStamp start;
 		float secs = frame / 60.f;
-		cameraPath(secs, cameras[1]);
+		cameraPath(0., cameras[1]);
 		glNamedBufferSubData(cameraData, 0, sizeof(cameras), &cameras);
 
 		if (!march)
@@ -185,7 +187,7 @@ int main() {
 						vec3 pos;
 						float padding0;
 						vec3 dir;
-						float padding1;
+						float nearplane;
 						vec3 up;
 						float padding2;
 						vec3 right;
@@ -298,7 +300,7 @@ int main() {
 						float unbiased_weight = 1.0 - unbiased_diff;
 						float unbiased_weight_sqr = unbiased_weight * unbiased_weight;
 						float feedback = mix(0.0, 1.0, unbiased_weight_sqr);
-						feedback = clamp(0.99 - screenSpaceDist/10., 0., 1.);
+						//feedback = clamp(0.7 - screenSpaceDist/10., 0., 1.);
 						feedback = 0.;
 						//feedback = 1. - 1./frame;
 						//feedback = max(0., feedback - worldSpaceDist*100.);

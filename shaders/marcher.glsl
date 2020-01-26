@@ -38,7 +38,7 @@ struct CameraParams {
     vec3 pos;
 	float padding0;
 	vec3 dir;
-	float padding1;
+	float nearplane;
 	vec3 up;
 	float padding2;
 	vec3 right;
@@ -54,6 +54,7 @@ vec2 getThreadUV(uvec3 id) {
 }
 
 float PIXEL_RADIUS;
+float RAY_CONE_RADIUS;
 
 // This factor how many pixel radiuses of screen space error do we allow
 // in the "near geometry snapping" at the end of "march" loop. Without it
@@ -130,8 +131,9 @@ vec2 shadowMarch(inout vec3 p, vec3 rd, int num_iters, float maxDist=10.) {
     int mat;
     float last_d = 0.;
     float step = 0.;
-    bool relax = true;
     float closest = 1e9;
+
+    RAY_CONE_RADIUS = 0.; // Shadow rays need to have the highest iteration count
 
     for (i = 0; i < num_iters; i++) {
         float d = scene(ro + t * rd, mat);
@@ -144,7 +146,7 @@ vec2 shadowMarch(inout vec3 p, vec3 rd, int num_iters, float maxDist=10.) {
             step = d * omega;
         }
 
-        float closest = min(closest, d);
+        closest = min(closest, d);
 
         last_d = d;
 
@@ -164,20 +166,24 @@ vec2 shadowMarch(inout vec3 p, vec3 rd, int num_iters, float maxDist=10.) {
 }
 
 // Raymarching loop based on techniques of Keinert et al. "Enhanced Sphere Tracing", 2014.
-float march(inout vec3 p, vec3 rd, out int material, int num_iters, float maxDist=200.) {
+float march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int num_iters, float maxDist=20.) {
     vec3 ro = p;
     int i;
     float omega = 1.3;
     float t = 0.;
+    float restart_t = t;
+    float restart_error = 0.;
     float candidate_error = 1e9;
     float candidate_t = t;
     int mat;
     float last_d = 0.;
     float step = 0.;
-    bool relax = true;
     material = MATERIAL_OTHER;
+    float coneSizeSlope = PIXEL_RADIUS / cameras[1].nearplane;
+    coneSizeSlope += 0.001*rand();
 
     for (i = 0; i < num_iters; i++) {
+        RAY_CONE_RADIUS = t * coneSizeSlope; // r_world = (z*r_screen)/znear
         float d = scene(ro + t * rd, mat);
 
         bool sorFail = omega > 1. && (d + last_d) < step;
@@ -190,6 +196,11 @@ float march(inout vec3 p, vec3 rd, out int material, int num_iters, float maxDis
 
         last_d = d;
         float error = d / t;
+
+        if (error > 0.5 * PIXEL_RADIUS) {
+            restart_t = t;
+            restart_error = error;
+        }
 
         if (!sorFail && error < candidate_error) {
             candidate_t = t;
@@ -204,6 +215,8 @@ float march(inout vec3 p, vec3 rd, out int material, int num_iters, float maxDis
         t += step;
     }
 
+    restart = vec2(0, PIXEL_RADIUS);
+
     if (t >= maxDist) {
         material = MATERIAL_SKY;
         return t;
@@ -215,6 +228,7 @@ float march(inout vec3 p, vec3 rd, out int material, int num_iters, float maxDis
         return t;
     }
 
+    restart = vec2(restart_t, restart_error);
     t = candidate_t;
     p = ro + t * rd;
 
@@ -242,6 +256,7 @@ void main() {
 
     float minDepth = 1e20;
     vec3 accum = vec3(0.);
+    vec2 ray_restart;
 
     for (int sample_id=0; sample_id < samplesPerPixel; sample_id++)
     {
@@ -257,13 +272,21 @@ void main() {
         vec3 p, dir;
         getCameraProjection(cam, uv, p, dir);
 
+        if (sample_id > 0) {
+            p += dir * max(0., ray_restart.x - ray_restart.y);
+        }
+
         int hitmat = MATERIAL_SKY;
-        float zdepth = march(p, dir, hitmat, 400);
+        vec2 restart;
+        float zdepth = march(p, dir, hitmat, restart, 400);
         float distance = length(p - cam.pos);
+
+        if (sample_id == 0) {
+            ray_restart = restart;
+        }
 
         vec3 color;
         vec3 skyColor = vec3(0., 0.2*abs(dir.y), 0.5 - dir.y);
-        //if (hitmat == MATERIAL_SKY && travel < 100.) { hitmat = MATERIAL_OTHER; }
 
         switch (hitmat) {
             case MATERIAL_SKY:
@@ -275,10 +298,11 @@ void main() {
                 vec3 to_camera = normalize(cam.pos - p);
                 vec3 to_light = normalize(vec3(-0.5, -1.0, 0.7));
 
-                vec3 shadowRayPos = p + to_camera * 5.* (PIXEL_RADIUS/zdepth);
+                vec3 shadowRayPos = p + to_camera * 1e-4;
                 const float maxShadowDist = 10.;
                 vec2 shadowResult = shadowMarch(shadowRayPos, to_light, 60, maxShadowDist);
                 float sun = min(shadowResult.x, maxShadowDist) / maxShadowDist;
+                //float sun = min(1.0, shadowResult.y*1e3);
                 sun = pow(sun, 2.);
 
                 float shine = max(0., dot(normal, to_light));
