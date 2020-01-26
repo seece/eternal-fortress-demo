@@ -14,8 +14,9 @@ struct CameraParameters {
 };
 
 const int screenw = 1024, screenh = 1024;
-static constexpr int SAMPLES_PER_PIXEL = 2;
+static constexpr int SAMPLES_PER_PIXEL = 1;
 static constexpr GLuint SAMPLE_BUFFER_TYPE = GL_RGBA16F;
+static constexpr GLuint JITTER_BUFFER_TYPE = GL_RG8;
 
 static void cameraPath(float t, CameraParameters& cam)
 {
@@ -59,6 +60,7 @@ int main() {
 	Texture<GL_TEXTURE_2D> gbuffer;
 	Texture<GL_TEXTURE_2D> zbuffer;
 	Texture<GL_TEXTURE_2D_ARRAY> samplebuffer;
+	Texture<GL_TEXTURE_2D_ARRAY> jitterbuffer;
 	Buffer cameraData;
 
 	setWrapToClamp(abuffer);
@@ -73,6 +75,7 @@ int main() {
 	glTextureStorage2D(gbuffer, 1, GL_RGBA32F, renderw, renderh);
 	glTextureStorage2D(zbuffer, 1, GL_R32F, renderw, renderh);
 	glTextureStorage3D(samplebuffer, 1, SAMPLE_BUFFER_TYPE, renderw, renderh, SAMPLES_PER_PIXEL);
+	glTextureStorage3D(jitterbuffer, 1, JITTER_BUFFER_TYPE, renderw, renderh, SAMPLES_PER_PIXEL);
 
 	int abuffer_read_layer = 0, frame = 0;
 	CameraParameters cameras[2] = {};
@@ -83,6 +86,7 @@ int main() {
 	{
 		// timestamp objects make gl queries at those locations; you can substract them to get the time
 		TimeStamp start;
+		frame = 0;
 		float secs = frame / 60.f;
 		cameraPath(0., cameras[1]);
 		glNamedBufferSubData(cameraData, 0, sizeof(cameras), &cameras);
@@ -98,6 +102,7 @@ int main() {
 		//bindImage("gbuffer", 0, gbuffer, GL_WRITE_ONLY, GL_RGBA32F);
 		bindImage("zbuffer", 0, zbuffer, GL_WRITE_ONLY, GL_R32F);
 		bindImage("samplebuffer", 0, samplebuffer, GL_WRITE_ONLY, SAMPLE_BUFFER_TYPE);
+		bindImage("jitterbuffer", 0, jitterbuffer, GL_WRITE_ONLY, JITTER_BUFFER_TYPE);
 		// the arguments of dispatch are the numbers of thread blocks in each direction;
 		// since our local size is 16x16x1, we'll get 1024x1024x1 threads total, just enough
 		// for our image
@@ -116,36 +121,35 @@ int main() {
 				GLSL(460,
 					layout(local_size_x = 16, local_size_y = 16) in;
 
-					vec2 unpackJitter(float d)
-					{
-						uint c = floatBitsToUint(d);
-						uvec2 b = uvec2((c >> 8) & 0xff, c & 0xff);
-						vec2 a = vec2(b) / 255;
-						return a - vec2(0.5);
-					}
-
 					uniform sampler2DArray samplebuffer;
+					uniform sampler2DArray jitterbuffer;
 					uniform sampler2D zbuffer;
 					layout(rgba32f) uniform image2D gbuffer;
 
 					void main() {
 						ivec2 ij = ivec2(gl_GlobalInvocationID.xy);
+						if (length(ij - ivec2(335, 512)) > 5) {
+							//imageStore(gbuffer, ij, vec4(0., 0., 0., 0.));
+							//return;
+						}
 						int samplesPerPixel = textureSize(samplebuffer, 0).z;
 						vec3 accum = vec3(0.);
 						float totalWeight = 0.;
-						//ivec2 dp = ivec2(jitter.x < 0 ? -1 : 1, jitter.y < 0 ? -1 : 1);
 
-						for (int y = -1; y <= 1; y++) {
-							for (int x = -1; x <= 1; x++) {
-								ivec2 delta = ivec2(x, y);
-								ivec2 coord = ij + delta;
-								for (int i = 0; i < samplesPerPixel; i++) {
+						for (int i = 0; i < samplesPerPixel; i++) {
+							for (int y = -1; y <= 1; y++) {
+								for (int x = -1; x <= 1; x++) {
+									ivec2 delta = ivec2(x, y);
+									ivec2 coord = ij + delta;
+								
 									vec4 c = texelFetch(samplebuffer, ivec3(coord, i), 0);
-									vec2 jitter = unpackJitter(floatBitsToUint(c.w));
-									
+									vec2 jitter = texelFetch(jitterbuffer, ivec3(coord, i), 0).xy;
+									jitter -= vec2(0.5);
+
 									vec2 sampleCoord = vec2(x, y) + jitter;
-									float weight = max(0., 1. - length(sampleCoord));
-									//float weight = exp(-2.29 * pow(length(sampleCoord), 2.)); // PRMan Gaussian fit to Blackman-Harris 3.3
+									float d = length(sampleCoord);
+									float weight = max(0., 1.25 - length(d));
+									//weight = exp(-2.29 * pow(length(sampleCoord), 2.)); // PRMan Gaussian fit to Blackman-Harris 3.3
 									accum += weight * c.rgb;
 									totalWeight += weight;
 								}
@@ -162,6 +166,7 @@ int main() {
 		glUseProgram(sampleResolve);
 		bindImage("gbuffer", 0, gbuffer, GL_WRITE_ONLY, GL_RGBA32F);
 		bindTexture("samplebuffer", samplebuffer);
+		bindTexture("jitterbuffer", jitterbuffer);
 		glDispatchCompute(64, 64, 1);
 
 		glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
@@ -197,6 +202,16 @@ int main() {
 					layout(std140) uniform cameraArray {
 						CameraParams cameras[2];
 					};
+
+					// https://gamedev.stackexchange.com/a/148088
+					vec3 linearToSRGB(vec3 linearRGB)
+					{
+						bvec3 cutoff = lessThan(linearRGB, vec3(0.0031308));
+						vec3 higher = vec3(1.055)*pow(linearRGB, vec3(1.0 / 2.4)) - vec3(0.055);
+						vec3 lower = linearRGB * vec3(12.92);
+
+						return mix(higher, lower, cutoff);
+					}
 
 					// source: https://github.com/playdeadgames/temporal/blob/4795aa0007d464371abe60b7b28a1cf893a4e349/Assets/Shaders/TemporalReprojection.shader#L122
 					vec4 clip_aabb(vec3 aabb_min, vec3 aabb_max, vec4 p, vec4 q)
@@ -301,17 +316,20 @@ int main() {
 						float unbiased_weight_sqr = unbiased_weight * unbiased_weight;
 						float feedback = mix(0.0, 1.0, unbiased_weight_sqr);
 						//feedback = clamp(0.7 - screenSpaceDist/10., 0., 1.);
-						feedback = 0.;
+						//feedback = 0.;
 						//feedback = 1. - 1./frame;
 						//feedback = max(0., feedback - worldSpaceDist*100.);
 
 						if (frame == 0) feedback = 0;
-						vec3 c = feedback * c0.xyz + (1 - feedback) * c1.xyz;
+						vec3 c = feedback * max(vec3(0.), c0.xyz) + (1 - feedback) * c1.xyz;
 						imageStore(abuffer_image, ivec3(gl_FragCoord.xy, 1 - abuffer_read_layer), vec4(c, z1));
 
-						c = c / (vec3(1.) + c);
-						col = vec4(pow(c, vec3(1. / 2.2)), 1.);
+						//c = c / (vec3(1.) + c);
 
+
+						//c = vec3(uv1.x);
+						col = vec4(linearToSRGB(c), 1.);
+						//col = vec4(pow(c, vec3(1. / 2.2)), 1.);
 						//col = vec4(vec3(screenSpaceDist/100.), 0.);
 					}
 				)

@@ -33,6 +33,7 @@ uniform float secs;
 
 layout(r32f) uniform image2D zbuffer;
 layout(rgba16f) uniform image2DArray samplebuffer;
+layout(rg8) uniform image2DArray jitterbuffer;
 
 struct CameraParams {
     vec3 pos;
@@ -103,24 +104,6 @@ vec3 evalnormal(vec3 p) {
 void getCameraProjection(CameraParams cam, vec2 uv, out vec3 outPos, out vec3 outDir) {
 	outPos = cam.pos + cam.dir + (uv.x - 0.5) * cam.right + (uv.y - 0.5) * cam.up;
 	outDir = normalize(outPos - cam.pos);
-}
-
-// absolute error (measured with euclidian length) seems to be less than 0.003
-float packJitter(vec2 jitter)
-{
-    vec2 a = jitter + vec2(0.5);
-    a *= 255;
-    uvec2 b = uvec2(a);
-    uint c = (b.x << 8) | b.y;
-    return uintBitsToFloat(c);
-}
-
-vec2 unpackJitter(float d)
-{
-    uint c = floatBitsToUint(d);
-    uvec2 b = uvec2((c >> 8) & 0xff, c & 0xff);
-    vec2 a = vec2(b) / 255;
-    return a - vec2(0.5);
 }
 
 vec2 shadowMarch(inout vec3 p, vec3 rd, int num_iters, float maxDist=10.) {
@@ -194,13 +177,15 @@ float march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int num_i
             step = d * omega;
         }
 
-        last_d = d;
         float error = d / t;
 
-        if (error > 0.5 * PIXEL_RADIUS) {
+        if (d > last_d && error < restart_error) {
             restart_t = t;
             restart_error = error;
         }
+
+        last_d = d;
+
 
         if (!sorFail && error < candidate_error) {
             candidate_t = t;
@@ -255,18 +240,14 @@ void main() {
     int samplesPerPixel = imageSize(samplebuffer).z;
 
     float minDepth = 1e20;
-    vec3 accum = vec3(0.);
     vec2 ray_restart;
 
     for (int sample_id=0; sample_id < samplesPerPixel; sample_id++)
     {
-        vec2 jitter = vec2(rand(), rand()) - vec2(0.5, 0.5);
-        vec2 absjitter = abs(jitter);
-        //MAX_SNAP_RADIUS = PIXEL_RADIUS * ((max(absjitter.x, absjitter.y) - 0.5)/0.5);
+        vec2 jitter = vec2(rand(), rand());
 
         vec2 uv = getThreadUV(gl_GlobalInvocationID);
-        jitter /= imageSize(zbuffer).xy;
-        uv += jitter;
+        uv += (jitter - vec2(0.5, 0.5)) / imageSize(zbuffer).xy;
 
         CameraParams cam = cameras[1];
         vec3 p, dir;
@@ -278,7 +259,7 @@ void main() {
 
         int hitmat = MATERIAL_SKY;
         vec2 restart;
-        float zdepth = march(p, dir, hitmat, restart, 400);
+        float zdepth = march(p, dir, hitmat, restart, 400 - sample_id * 300);
         float distance = length(p - cam.pos);
 
         if (sample_id == 0) {
@@ -314,10 +295,10 @@ void main() {
                 break;
         }
 
-        accum += color;
         minDepth = min(minDepth, zdepth);
 
-        imageStore(samplebuffer, ivec3(gl_GlobalInvocationID.xy, sample_id), vec4(color, packJitter(jitter)));
+        imageStore(samplebuffer, ivec3(gl_GlobalInvocationID.xy, sample_id), vec4(color, 0.));
+        imageStore(jitterbuffer, ivec3(gl_GlobalInvocationID.xy, sample_id), vec4(jitter, 0., 0.));
     }
 
     imageStore(zbuffer, ivec2(gl_GlobalInvocationID.xy), vec4(minDepth));
