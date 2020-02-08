@@ -86,10 +86,11 @@ int main() {
 	{
 		// timestamp objects make gl queries at those locations; you can substract them to get the time
 		TimeStamp start;
-		frame = 0;
 		float secs = frame / 60.f;
 		cameraPath(0., cameras[1]);
 		glNamedBufferSubData(cameraData, 0, sizeof(cameras), &cameras);
+
+		glDisable(GL_BLEND);
 
 		if (!march)
 			march = createProgram("shaders/marcher.glsl");
@@ -134,7 +135,8 @@ int main() {
 						}
 						int samplesPerPixel = textureSize(samplebuffer, 0).z;
 						vec3 accum = vec3(0.);
-						float totalWeight = 0.;
+						float totalWeight = 1e-6;
+
 
 						for (int i = 0; i < samplesPerPixel; i++) {
 							for (int y = -1; y <= 1; y++) {
@@ -149,12 +151,15 @@ int main() {
 									vec2 sampleCoord = vec2(x, y) + jitter;
 									float d = length(sampleCoord);
 									float weight = max(0., 1.25 - length(d));
-									//weight = exp(-2.29 * pow(length(sampleCoord), 2.)); // PRMan Gaussian fit to Blackman-Harris 3.3
+									//weight = 1.0;
+									//weight = exp(-2.29 * pow(length(sampleCoord), 2.)); // PRMan Gaussian fit to Blackman-Harris 3.
 									accum += weight * c.rgb;
 									totalWeight += weight;
 								}
 							}
 						}
+
+						// TODO fill small zbuffer holes here
 
 						accum /= totalWeight;
 						imageStore(gbuffer, ij, vec4(accum, 0.));
@@ -260,7 +265,62 @@ int main() {
 					uniform int abuffer_read_layer;
 					uniform int frame;
 
+					vec4 sampleHistoryBuffer(vec2 uv) {
+						// return texture(abuffer, vec3(uv, abuffer_read_layer));
+						vec2 uvScreen = uv * textureSize(abuffer, 0).xy;
+						//uvScreen -= vec2(0.5);
+
+						vec2 uv2 = (uvScreen - vec2(.5));
+						ivec2 uv2pix = ivec2(uv2);
+						vec2 w = fract(uv2);
+						vec4 col = vec4(0.);
+						col += (1. - w.x) * (1. - w.y) * texelFetch(abuffer, ivec3(uv2pix, abuffer_read_layer), 0);
+						col += w.x * (1. - w.y) * texelFetch(abuffer, ivec3(uv2pix + vec2(1., 0), abuffer_read_layer), 0);
+						col += (1. - w.x) * w.y * texelFetch(abuffer, ivec3(uv2pix + vec2(0., 1.), abuffer_read_layer), 0);
+						col += w.x * w.y * texelFetch(abuffer, ivec3(uv2pix + vec2(1., 1.), abuffer_read_layer), 0);
+
+						//return col;
+						return texture(abuffer, vec3(uv, abuffer_read_layer), 0);
+
+
+						ivec2 pixelCoords = ivec2(uvScreen);
+						vec2 subPixel = fract(uvScreen);
+
+						float totalWeight = 0.;
+						vec3 color = vec3(0.);
+						float z = 1e9;
+
+						for (int y = -1; y <= 1; y++) {
+							for (int x = -1; x <= 1; x++) {
+
+								ivec2 delta = ivec2(x, y);
+
+								// "pos" in the same coordinate system as "subPixel."
+								// This means e.g. (-1, 0) is at the center of the texel on the left.
+								vec2 pos = vec2(x, y);
+
+								vec4 c = texelFetch(abuffer, ivec3(pixelCoords + delta, abuffer_read_layer), 0);
+								
+								// Tent filter based on the distance from the pixel center.
+								float d = length(pos - subPixel);
+								float weight = max(0., 1.0 - length(d));
+								//weight = 1.;
+
+								color += weight * c.rgb;
+								totalWeight += weight;
+								z = min(z, c.w);
+							}
+						}
+
+						color /= totalWeight;
+						
+						//ivec2 uvpix = ivec2(uv * textureSize(abuffer, 0).xy);
+						//vec4 c0 = texelFetch(abuffer, ivec3(uvpix, abuffer_read_layer), 0);
+						return vec4(color, z);
+					}
+
 					void main() {
+						//vec2 pixelCoord = ivec2(gl_FragCoord.xy + vec2(0.5));
 						vec4 c1 = texelFetch(gbuffer, ivec2(gl_FragCoord.xy), 0);
 						float z1 = texelFetch(zbuffer, ivec2(gl_FragCoord.xy), 0).x;
 						const ivec2[8] deltas = {
@@ -273,6 +333,14 @@ int main() {
 							ivec2(-1, 1),
 							ivec2(1,  1),
 						};
+
+						float minz = 1e9;
+
+						for (int i = 0; i < 8; i++) {
+							float z = texelFetch(zbuffer, ivec2(gl_FragCoord.xy) + deltas[i], 0).x;
+							minz = min(minz, z);
+						}
+						//z1 = min(z1, minz); // TODO is this necessary
 
 						vec3 minbox = c1.rgb;
 						vec3 maxbox = c1.rgb;
@@ -294,8 +362,8 @@ int main() {
 						vec3 world1 = rayStartPos1 + rayDir1 * z1;
 
 						vec2 uv0 = reprojectPoint(cameras[0], world1);
-						vec4 c0 = texture(abuffer, vec3(uv0, abuffer_read_layer));
-						float z0 = c0.w; // NOTE: Linearly interpolated depth.
+						vec4 c0 = sampleHistoryBuffer(uv0);
+						float z0 = c0.w;
 						vec3 rayStartPos0, rayDir0;
 						getCameraProjection(cameras[0], uv0, rayStartPos0, rayDir0);
 						vec3 world0 = rayStartPos0 + rayDir0 * z0;
@@ -316,19 +384,35 @@ int main() {
 						float unbiased_weight_sqr = unbiased_weight * unbiased_weight;
 						float feedback = mix(0.0, 1.0, unbiased_weight_sqr);
 						//feedback = clamp(0.7 - screenSpaceDist/10., 0., 1.);
-						//feedback = 0.;
+						feedback = 0.995;
 						//feedback = 1. - 1./frame;
 						//feedback = max(0., feedback - worldSpaceDist*100.);
 
 						if (frame == 0) feedback = 0;
-						vec3 c = feedback * max(vec3(0.), c0.xyz) + (1 - feedback) * c1.xyz;
+						//if (z1 >= 1e9) feedback = 0;
+						//vec3 c = c1.rgb;
+						//c.rgb = c1.rgb;
+						vec3 c = feedback * max(vec3(0.), c0.xyz) + (1 - feedback) * max(vec3(0.), c1.xyz);
+
+
+						if (frame % 20 == 0) {
+							if (length(uv0 - vec2(.5, .5)) < 0.1) {
+								c.rgb = vec3(0., 1., 0.);
+							}
+						}
+
 						imageStore(abuffer_image, ivec3(gl_FragCoord.xy, 1 - abuffer_read_layer), vec4(c, z1));
 
-						//c = c / (vec3(1.) + c);
+
+						c = c / (vec3(1.) + c);
+
+						col.rgb = c.rgb;
+						//col.rgb = c0.rgb;
+						col = vec4(linearToSRGB(col.rgb), 1.);
 
 
 						//c = vec3(uv1.x);
-						col = vec4(linearToSRGB(c), 1.);
+						//col = vec4(linearToSRGB(c), 1.);
 						//col = vec4(pow(c, vec3(1. / 2.2)), 1.);
 						//col = vec4(vec3(screenSpaceDist/100.), 0.);
 					}
