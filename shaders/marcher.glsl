@@ -55,12 +55,12 @@ vec2 getThreadUV(uvec3 id) {
 }
 
 float PIXEL_RADIUS;
-float RAY_CONE_RADIUS;
 
 // This factor how many pixel radiuses of screen space error do we allow
 // in the "near geometry snapping" at the end of "march" loop. Without it
 // the skybox color leaks through with low grazing angles.
 const float SNAP_INFLATE_FACTOR = 3.;
+const float DISTANCE_INFLATE_FACTOR = 1.01;
 
 // mandelbox distance function by Rrola (Buddhi's distance estimation)
 // http://www.fractalforums.com/index.php?topic=2785.msg21412#msg21412
@@ -88,7 +88,7 @@ float mandelbox(vec3 position, int iters=7) {
 
 float scene(vec3 p, out int material, float pixelConeSize=1.) {
 	material = MATERIAL_OTHER;
-	return mandelbox(p, 7);
+	return mandelbox(p, 8);
 }
 
 vec3 evalnormal(vec3 p) {
@@ -115,8 +115,6 @@ vec2 shadowMarch(inout vec3 p, vec3 rd, int num_iters, float maxDist=10.) {
     float last_d = 0.;
     float step = 0.;
     float closest = 1e9;
-
-    RAY_CONE_RADIUS = 0.; // Shadow rays need to have the highest iteration count
 
     for (i = 0; i < num_iters; i++) {
         float d = scene(ro + t * rd, mat);
@@ -163,10 +161,9 @@ float march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int num_i
     float step = 0.;
     material = MATERIAL_OTHER;
     float coneSizeSlope = PIXEL_RADIUS / cameras[1].nearplane;
-    coneSizeSlope += 0.001*rand();
+    // coneSizeSlope += 0.001*rand();
 
     for (i = 0; i < num_iters; i++) {
-        RAY_CONE_RADIUS = t * coneSizeSlope; // r_world = (z*r_screen)/znear
         float d = scene(ro + t * rd, mat);
 
         bool sorFail = omega > 1. && (d + last_d) < step;
@@ -186,13 +183,12 @@ float march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int num_i
 
         last_d = d;
 
-
         if (!sorFail && error < candidate_error) {
             candidate_t = t;
             candidate_error = error;
         }
 
-        if (!sorFail && error < PIXEL_RADIUS || t >= maxDist) {
+        if (!sorFail && error < 4.*PIXEL_RADIUS || t >= maxDist) {
             material = mat;
             break;
         }
@@ -220,7 +216,7 @@ float march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int num_i
 
     // See "Enhanced Sphere Tracing" section 3.4. and
     // section 3.1.1 in "Efficient Antialiased Rendering of 3-D Linear Fractals"
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 2; i++) {
         int temp;
         float e = t * 2. * PIXEL_RADIUS;
         t += scene(ro + t*rd, temp) - e;
@@ -240,11 +236,11 @@ void main() {
     int samplesPerPixel = imageSize(samplebuffer).z;
 
     float minDepth = 1e20;
-    vec2 ray_restart;
 
     for (int sample_id=0; sample_id < samplesPerPixel; sample_id++)
     {
         vec2 jitter = vec2(rand(), rand());
+        //jitter *= 01;
 
         vec2 uv = getThreadUV(gl_GlobalInvocationID);
         uv += (jitter - vec2(0.5, 0.5)) / imageSize(zbuffer).xy;
@@ -253,18 +249,10 @@ void main() {
         vec3 p, dir;
         getCameraProjection(cam, uv, p, dir);
 
-        if (sample_id > 0) {
-            p += dir * max(0., ray_restart.x - ray_restart.y);
-        }
-
         int hitmat = MATERIAL_SKY;
         vec2 restart;
-        float zdepth = march(p, dir, hitmat, restart, 400 - sample_id * 300);
+        float zdepth = march(p, dir, hitmat, restart, 300);
         float distance = length(p - cam.pos);
-
-        if (sample_id == 0) {
-            ray_restart = restart;
-        }
 
         vec3 color;
         vec3 skyColor = vec3(0., 0.2*abs(dir.y), 0.5 - dir.y);
@@ -279,7 +267,7 @@ void main() {
                 vec3 to_camera = normalize(cam.pos - p);
                 vec3 to_light = normalize(vec3(-0.5, -1.0, 0.7));
 
-                vec3 shadowRayPos = p + to_camera * 1e-4;
+                vec3 shadowRayPos = p + to_camera * 1e-3;
                 const float maxShadowDist = 10.;
                 vec2 shadowResult = shadowMarch(shadowRayPos, to_light, 60, maxShadowDist);
                 float sun = min(shadowResult.x, maxShadowDist) / maxShadowDist;
@@ -287,8 +275,9 @@ void main() {
                 sun = pow(sun, 2.);
 
                 float shine = max(0., dot(normal, to_light));
-                vec3 base = vec3(1.); //vec3(0.5) + .5*sin(vec3(p) * 50.);
+                vec3 base = vec3(1.);
                 color = base * sun * vec3(shine);
+                //color = base * vec3(shine);
                 color = clamp(color, vec3(0.), vec3(10.));
                 float fog = pow(min(1., distance / 10.), 4.0);
                 color = mix(color, vec3(0.5, 0., 0.), fog);

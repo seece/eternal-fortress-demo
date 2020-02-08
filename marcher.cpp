@@ -87,7 +87,7 @@ int main() {
 		// timestamp objects make gl queries at those locations; you can substract them to get the time
 		TimeStamp start;
 		float secs = frame / 60.f;
-		cameraPath(0., cameras[1]);
+		cameraPath(fmod(secs, 2.)+30., cameras[1]);
 		glNamedBufferSubData(cameraData, 0, sizeof(cameras), &cameras);
 
 		glDisable(GL_BLEND);
@@ -113,7 +113,6 @@ int main() {
 		// before the next shader call (wasn't an issue on my hardware in this case, but you should always make sure
 		// to place the correct barriers when writing from compute shaders and reading in subsequent shaders)
 		glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-		glMemoryBarrier(GL_ATOMIC_COUNTER_BARRIER_BIT); // TODO Is this needed for integer texture atomic max?
 
 		TimeStamp drawTime;
 
@@ -129,15 +128,14 @@ int main() {
 
 					void main() {
 						ivec2 ij = ivec2(gl_GlobalInvocationID.xy);
-						if (length(ij - ivec2(335, 512)) > 5) {
-							//imageStore(gbuffer, ij, vec4(0., 0., 0., 0.));
-							//return;
-						}
 						int samplesPerPixel = textureSize(samplebuffer, 0).z;
 						vec3 accum = vec3(0.);
 						float totalWeight = 1e-6;
 
-
+						float centerz = texelFetch(zbuffer, ij, 0).x;
+						float aroundzMax = 0.;
+						float aroundzMin = 1e9;
+						vec3 around = vec3(0.);
 						for (int i = 0; i < samplesPerPixel; i++) {
 							for (int y = -1; y <= 1; y++) {
 								for (int x = -1; x <= 1; x++) {
@@ -145,8 +143,19 @@ int main() {
 									ivec2 coord = ij + delta;
 								
 									vec4 c = texelFetch(samplebuffer, ivec3(coord, i), 0);
+									float z = texelFetch(zbuffer, coord, 0).x;
+									
 									vec2 jitter = texelFetch(jitterbuffer, ivec3(coord, i), 0).xy;
 									jitter -= vec2(0.5);
+
+									if (x == 0 && y == 0) {
+										centerz = z;
+									} 
+									else {
+										aroundzMax = max(aroundzMax, z);
+										aroundzMin = min(aroundzMin, z);
+										around += c.rgb;
+									}
 
 									vec2 sampleCoord = vec2(x, y) + jitter;
 									float d = length(sampleCoord);
@@ -159,10 +168,16 @@ int main() {
 							}
 						}
 
-						// TODO fill small zbuffer holes here
-
 						accum /= totalWeight;
-						imageStore(gbuffer, ij, vec4(accum, 0.));
+
+						float outz = centerz;
+
+						/*if (centerz > aroundzMax) {
+							accum = around / 8.;
+							outz = aroundzMin;
+						}*/
+
+						imageStore(gbuffer, ij, vec4(accum, outz));
 					}
 			)
 			);
@@ -170,6 +185,7 @@ int main() {
 
 		glUseProgram(sampleResolve);
 		bindImage("gbuffer", 0, gbuffer, GL_WRITE_ONLY, GL_RGBA32F);
+		bindTexture("zbuffer", zbuffer);
 		bindTexture("samplebuffer", samplebuffer);
 		bindTexture("jitterbuffer", jitterbuffer);
 		glDispatchCompute(64, 64, 1);
@@ -270,6 +286,7 @@ int main() {
 						vec2 uvScreen = uv * textureSize(abuffer, 0).xy;
 						//uvScreen -= vec2(0.5);
 
+						/*
 						vec2 uv2 = (uvScreen - vec2(.5));
 						ivec2 uv2pix = ivec2(uv2);
 						vec2 w = fract(uv2);
@@ -278,13 +295,13 @@ int main() {
 						col += w.x * (1. - w.y) * texelFetch(abuffer, ivec3(uv2pix + vec2(1., 0), abuffer_read_layer), 0);
 						col += (1. - w.x) * w.y * texelFetch(abuffer, ivec3(uv2pix + vec2(0., 1.), abuffer_read_layer), 0);
 						col += w.x * w.y * texelFetch(abuffer, ivec3(uv2pix + vec2(1., 1.), abuffer_read_layer), 0);
+						return col;
+						*/
+						
+						//return texture(abuffer, vec3(uv, abuffer_read_layer), 0);
 
-						//return col;
-						return texture(abuffer, vec3(uv, abuffer_read_layer), 0);
-
-
-						ivec2 pixelCoords = ivec2(uvScreen);
-						vec2 subPixel = fract(uvScreen);
+						ivec2 pixelCoords = ivec2(uvScreen - vec2(0.5));
+						vec2 subPixel = fract(uvScreen - vec2(0.5));
 
 						float totalWeight = 0.;
 						vec3 color = vec3(0.);
@@ -303,16 +320,19 @@ int main() {
 								
 								// Tent filter based on the distance from the pixel center.
 								float d = length(pos - subPixel);
-								float weight = max(0., 1.0 - length(d));
+								float weight = max(0., 1.0 - d); //TODO 1.0-d is like bilinear tap
+								//weight = pow(weight, .5);
 								//weight = 1.;
 
 								color += weight * c.rgb;
-								totalWeight += weight;
-								z = min(z, c.w);
+								totalWeight += abs(weight);
+								z += c.w;
+								//z = min(z, c.w);
 							}
 						}
 
 						color /= totalWeight;
+						z /= totalWeight;
 						
 						//ivec2 uvpix = ivec2(uv * textureSize(abuffer, 0).xy);
 						//vec4 c0 = texelFetch(abuffer, ivec3(uvpix, abuffer_read_layer), 0);
@@ -322,7 +342,8 @@ int main() {
 					void main() {
 						//vec2 pixelCoord = ivec2(gl_FragCoord.xy + vec2(0.5));
 						vec4 c1 = texelFetch(gbuffer, ivec2(gl_FragCoord.xy), 0);
-						float z1 = texelFetch(zbuffer, ivec2(gl_FragCoord.xy), 0).x;
+						//float z1 = texelFetch(zbuffer, ivec2(gl_FragCoord.xy), 0).x;
+						float z1 = c1.w;
 						const ivec2[8] deltas = {
 							ivec2(0, -1),  // direct neighbors
 							ivec2(-1, 0),
@@ -383,8 +404,8 @@ int main() {
 						float unbiased_weight = 1.0 - unbiased_diff;
 						float unbiased_weight_sqr = unbiased_weight * unbiased_weight;
 						float feedback = mix(0.0, 1.0, unbiased_weight_sqr);
-						//feedback = clamp(0.7 - screenSpaceDist/10., 0., 1.);
-						feedback = 0.995;
+						feedback = clamp(0.95 - screenSpaceDist/20., 0., 1.);
+						//feedback = 0.9;
 						//feedback = 1. - 1./frame;
 						//feedback = max(0., feedback - worldSpaceDist*100.);
 
@@ -395,19 +416,16 @@ int main() {
 						vec3 c = feedback * max(vec3(0.), c0.xyz) + (1 - feedback) * max(vec3(0.), c1.xyz);
 
 
-						if (frame % 20 == 0) {
-							if (length(uv0 - vec2(.5, .5)) < 0.1) {
-								c.rgb = vec3(0., 1., 0.);
-							}
-						}
+						//if (frame % 20 == 0 && length(uv0 - vec2(.5, .5)) < 0.1) {
+						//		c.rgb = vec3(0., 1., 0.);
+						//}
 
-						imageStore(abuffer_image, ivec3(gl_FragCoord.xy, 1 - abuffer_read_layer), vec4(c, z1));
-
+						float zstore = z1;
+						imageStore(abuffer_image, ivec3(gl_FragCoord.xy, 1 - abuffer_read_layer), vec4(c, zstore));
 
 						c = c / (vec3(1.) + c);
 
 						col.rgb = c.rgb;
-						//col.rgb = c0.rgb;
 						col = vec4(linearToSRGB(col.rgb), 1.);
 
 
