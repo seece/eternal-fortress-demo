@@ -144,6 +144,9 @@ int main() {
 								
 									vec4 c = texelFetch(samplebuffer, ivec3(coord, i), 0);
 									float z = texelFetch(zbuffer, coord, 0).x;
+
+									// Tonemap colors already here
+									c.rgb = c.rgb / (vec3(1.) + c.rgb);
 									
 									vec2 jitter = texelFetch(jitterbuffer, ivec3(coord, i), 0).xy;
 									jitter -= vec2(0.5);
@@ -334,8 +337,6 @@ int main() {
 						color /= totalWeight;
 						z /= totalWeight;
 						
-						//ivec2 uvpix = ivec2(uv * textureSize(abuffer, 0).xy);
-						//vec4 c0 = texelFetch(abuffer, ivec3(uvpix, abuffer_read_layer), 0);
 						return vec4(color, z);
 					}
 
@@ -413,26 +414,20 @@ int main() {
 						//if (z1 >= 1e9) feedback = 0;
 						//vec3 c = c1.rgb;
 						//c.rgb = c1.rgb;
+
+						// Tone map c1, c0 is already in LDR
+						// c0.rgb = c0.rgb / (vec3(1.) + c0.rgb);
+						// c1.rgb = c1.rgb / (vec3(1.) + c1.rgb);
+						
 						vec3 c = feedback * max(vec3(0.), c0.xyz) + (1 - feedback) * max(vec3(0.), c1.xyz);
-
-
-						//if (frame % 20 == 0 && length(uv0 - vec2(.5, .5)) < 0.1) {
-						//		c.rgb = vec3(0., 1., 0.);
-						//}
-
-						float zstore = z1;
-						imageStore(abuffer_image, ivec3(gl_FragCoord.xy, 1 - abuffer_read_layer), vec4(c, zstore));
-
-						c = c / (vec3(1.) + c);
 
 						col.rgb = c.rgb;
 						col = vec4(linearToSRGB(col.rgb), 1.);
 
+						// Inverse tone map, store linear values
+						// c = c / (vec3(1.) - c);
 
-						//c = vec3(uv1.x);
-						//col = vec4(linearToSRGB(c), 1.);
-						//col = vec4(pow(c, vec3(1. / 2.2)), 1.);
-						//col = vec4(vec3(screenSpaceDist/100.), 0.);
+						imageStore(abuffer_image, ivec3(gl_FragCoord.xy, 1 - abuffer_read_layer), vec4(c, z1));
 					}
 				)
 			);
