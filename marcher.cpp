@@ -254,19 +254,27 @@ int main() {
 					// source: https://github.com/playdeadgames/temporal/blob/4795aa0007d464371abe60b7b28a1cf893a4e349/Assets/Shaders/TemporalReprojection.shader#L122
 					vec4 clip_aabb(vec3 aabb_min, vec3 aabb_max, vec4 p, vec4 q)
 					{
-						// note: only clips towards aabb center (but fast!)
-						vec3 p_clip = vec3(0.5) * (aabb_max + aabb_min);
-						vec3 e_clip = vec3(0.5) * (aabb_max - aabb_min) + vec3(0.00000001f);
+						vec4 r = q - p;
+						vec3 rmax = aabb_max - p.xyz;
+						vec3 rmin = aabb_min - p.xyz;
 
-						vec4 v_clip = q - vec4(p_clip, p.w);
-						vec3 v_unit = v_clip.xyz / e_clip;
-						vec3 a_unit = abs(v_unit);
-						float ma_unit = max(a_unit.x, max(a_unit.y, a_unit.z));
+						const float eps = 0.00000001f;
 
-						if (ma_unit > 1.0)
-							return vec4(p_clip, p.w) + v_clip / ma_unit;
-						else
-							return q;// point inside aabb
+						if (r.x > rmax.x + eps)
+							r *= (rmax.x / r.x);
+						if (r.y > rmax.y + eps)
+							r *= (rmax.y / r.y);
+						if (r.z > rmax.z + eps)
+							r *= (rmax.z / r.z);
+
+						if (r.x < rmin.x - eps)
+							r *= (rmin.x / r.x);
+						if (r.y < rmin.y - eps)
+							r *= (rmin.y / r.y);
+						if (r.z < rmin.z - eps)
+							r *= (rmin.z / r.z);
+
+						return p + r;
 					}
 
 					void getCameraProjection(CameraParams cam, vec2 uv, out vec3 outPos, out vec3 outDir) {
@@ -290,6 +298,26 @@ int main() {
 						return dot(rgb, vec3(0.2126, 0.7152, 0.0722));
 					}
 
+					// https://software.intel.com/en-us/node/503873
+					vec3 RGB_YCoCg(vec3 c)
+					{
+						return vec3(
+							c.x / 4.0 + c.y / 2.0 + c.z / 4.0,
+							c.x / 2.0 - c.z / 2.0,
+							-c.x / 4.0 + c.y / 2.0 - c.z / 4.0
+						);
+					}
+
+					// https://software.intel.com/en-us/node/503873
+					vec3 YCoCg_RGB(vec3 c)
+					{
+						return clamp(vec3(
+							c.x + c.y - c.z,
+							c.x + c.z,
+							c.x - c.y - c.z
+						), vec3(0.), vec3(1.));
+					}
+
 					uniform sampler2D gbuffer;
 					uniform sampler2D zbuffer;
 					uniform sampler2DArray abuffer;
@@ -298,23 +326,28 @@ int main() {
 					uniform int abuffer_read_layer;
 					uniform int frame;
 
+					// Convert color into a perceptual clipping space
+					vec3 RGB_Perceptual(vec3 x)
+					{
+						return RGB_YCoCg(x);
+					}
 
-					vec4 sampleHistoryBuffer(vec2 uv) {
-						// return texture(abuffer, vec3(uv, abuffer_read_layer));
+					// Convert color back to RGB
+					vec3 Perceptual_RGB(vec3 x)
+					{
+						return YCoCg_RGB(x);
+					}
+
+					vec4 fetchFromNewBuffer(ivec2 coord)
+					{
+						vec4 c = texelFetch(gbuffer, coord, 0);
+						c.rgb = RGB_Perceptual(c.rgb);
+						return c;
+					}
+
+					vec4 sampleHistoryBuffer(vec2 uv)
+					{
 						vec2 uvScreen = uv * textureSize(abuffer, 0).xy;
-						//uvScreen -= vec2(0.5);
-
-						/*
-						vec2 uv2 = (uvScreen - vec2(.5));
-						ivec2 uv2pix = ivec2(uv2);
-						vec2 w = fract(uv2);
-						vec4 col = vec4(0.);
-						col += (1. - w.x) * (1. - w.y) * texelFetch(abuffer, ivec3(uv2pix, abuffer_read_layer), 0);
-						col += w.x * (1. - w.y) * texelFetch(abuffer, ivec3(uv2pix + vec2(1., 0), abuffer_read_layer), 0);
-						col += (1. - w.x) * w.y * texelFetch(abuffer, ivec3(uv2pix + vec2(0., 1.), abuffer_read_layer), 0);
-						col += w.x * w.y * texelFetch(abuffer, ivec3(uv2pix + vec2(1., 1.), abuffer_read_layer), 0);
-						return col;
-						*/
 						
 						#ifdef USE_BILINEAR_HISTORY_SAMPLE
 						return texture(abuffer, vec3(uv, abuffer_read_layer), 0);
@@ -347,20 +380,19 @@ int main() {
 								color += weight * c.rgb;
 								totalWeight += abs(weight);
 								z += c.w;
-								//z = min(z, c.w);
+								//z = min(z, c.w); // TODO use this instead of average
 							}
 						}
 
 						color /= totalWeight;
 						z /= totalWeight;
 						
-						return vec4(color, z);
+						return vec4(RGB_Perceptual(color), z);
 					}
 
+
 					void main() {
-						//vec2 pixelCoord = ivec2(gl_FragCoord.xy + vec2(0.5));
-						vec4 c1 = texelFetch(gbuffer, ivec2(gl_FragCoord.xy), 0);
-						//float z1 = texelFetch(zbuffer, ivec2(gl_FragCoord.xy), 0).x;
+						vec4 c1 = fetchFromNewBuffer(ivec2(gl_FragCoord.xy));
 						float z1 = c1.w;
 						const ivec2[8] deltas = {
 							ivec2(0, -1),  // direct neighbors
@@ -379,19 +411,32 @@ int main() {
 							float z = texelFetch(zbuffer, ivec2(gl_FragCoord.xy) + deltas[i], 0).x;
 							minz = min(minz, z);
 						}
-						//z1 = min(z1, minz); // TODO is this necessary
 
-						vec3 minbox = c1.rgb;
-						vec3 maxbox = c1.rgb;
+						struct Box
+						{
+							vec3 mn, mx;
+						};
+
+						Box allNeighs = { c1.rgb, c1.rgb };
+						Box crossNeighs = { c1.rgb, c1.rgb };		
+
 						vec3 cavg = c1.rgb;
 						for (int i = 0; i < 8; i++) {
-							vec4 cn = texelFetch(gbuffer, ivec2(gl_FragCoord.xy) + deltas[i], 0);
-							minbox = min(minbox, cn.rgb);
-							maxbox = max(maxbox, cn.rgb);
+							vec4 cn = fetchFromNewBuffer(ivec2(gl_FragCoord.xy) + deltas[i]);
+							allNeighs.mn = min(allNeighs.mn, cn.rgb);
+							allNeighs.mx = max(allNeighs.mx, cn.rgb);
+							if (i < 4) {
+								crossNeighs.mn = min(crossNeighs.mn, cn.rgb);
+								crossNeighs.mx = max(crossNeighs.mx, cn.rgb);
+							}
 							cavg += cn.rgb;
 						}
 						cavg /= 9.;
-						// compute also cross average
+						
+						Box finalBox = {
+							0.5 * (allNeighs.mn + crossNeighs.mn),
+							0.5 * (allNeighs.mx + crossNeighs.mx),
+						};
 
 						ivec2 res = textureSize(gbuffer, 0).xy;
 
@@ -410,8 +455,16 @@ int main() {
 						float worldSpaceDist = length(world0 - world1);
 						float screenSpaceDist = length((uv1 - uv0) * res);
 
-						c0.rgb = clamp(c0.rgb, minbox, maxbox);
+						#if 0
+						c0.rgb = clamp(c0.rgb, finalBox.mn, finalBox.mx);
+						#else
+						c0.rgb = clip_aabb(finalBox.mn, finalBox.mx, vec4(clamp(cavg, finalBox.mn, finalBox.mx), 0.), vec4(c0.rgb, 0.)).rgb;
+						#endif
 						//c0.rgb = clip_aabb(minbox, maxbox, vec4(clamp(cavg, minbox, maxbox), 0.), vec4(c0.rgb, 0.)).rgb;
+						c0.rgb = Perceptual_RGB(c0.rgb);
+						c1.rgb = Perceptual_RGB(c1.rgb);
+						
+						
 
 						// feedback weight from unbiased luminance diff (t.lottes)
 						// https://github.com/playdeadgames/temporal/blob/4795aa0007d464371abe60b7b28a1cf893a4e349/Assets/Shaders/TemporalReprojection.shader#L313
