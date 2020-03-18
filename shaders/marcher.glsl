@@ -62,6 +62,9 @@ float PIXEL_RADIUS;
 const float SNAP_INFLATE_FACTOR = 3.;
 const float DISTANCE_INFLATE_FACTOR = 1.01;
 
+// Ray's maximum travel distance.
+const float MAX_DISTANCE = 1e9;
+
 // mandelbox distance function by Rrola (Buddhi's distance estimation)
 // http://www.fractalforums.com/index.php?topic=2785.msg21412#msg21412
 
@@ -114,7 +117,7 @@ vec2 shadowMarch(inout vec3 p, vec3 rd, int num_iters, float maxDist=10.) {
     int mat;
     float last_d = 0.;
     float step = 0.;
-    float closest = 1e9;
+    float closest = MAX_DISTANCE;
 
     for (i = 0; i < num_iters; i++) {
         float d = scene(ro + t * rd, mat);
@@ -200,6 +203,7 @@ float march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int num_i
 
     if (t >= maxDist) {
         material = MATERIAL_SKY;
+        t = MAX_DISTANCE;
         return t;
     }
 
@@ -228,7 +232,8 @@ float march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int num_i
 }
 
 void main() {
-    srand(frame, uint(gl_GlobalInvocationID.x), uint(gl_GlobalInvocationID.y));
+    //srand(frame, uint(gl_GlobalInvocationID.x), uint(gl_GlobalInvocationID.y));
+    srand(frame, 0, 0);
     jenkins_mix();
     jenkins_mix();
     ivec2 res = imageSize(zbuffer).xy;
@@ -240,7 +245,6 @@ void main() {
     for (int sample_id=0; sample_id < samplesPerPixel; sample_id++)
     {
         vec2 jitter = vec2(rand(), rand());
-        //jitter *= 01;
 
         vec2 uv = getThreadUV(gl_GlobalInvocationID);
         uv += (jitter - vec2(0.5, 0.5)) / imageSize(zbuffer).xy;

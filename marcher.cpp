@@ -87,7 +87,7 @@ int main() {
 		// timestamp objects make gl queries at those locations; you can substract them to get the time
 		TimeStamp start;
 		float secs = frame / 60.f;
-		cameraPath(fmod(secs, 2.)+30., cameras[1]);
+		cameraPath(fmod(0., 2.)+30., cameras[1]);
 		glNamedBufferSubData(cameraData, 0, sizeof(cameras), &cameras);
 
 		glDisable(GL_BLEND);
@@ -133,6 +133,9 @@ int main() {
 						float totalWeight = 1e-6;
 
 						float centerz = texelFetch(zbuffer, ij, 0).x;
+
+						#ifdef USE_PROPER_FILTER
+						
 						float aroundzMax = 0.;
 						float aroundzMin = 1e9;
 						vec3 around = vec3(0.);
@@ -170,6 +173,15 @@ int main() {
 								}
 							}
 						}
+						#else 
+						for (int i = 0; i < samplesPerPixel; i++) {
+							vec4 c = texelFetch(samplebuffer, ivec3(ij, i), 0);
+							float z = texelFetch(zbuffer, ij, 0).x;
+							accum += c.rgb;
+							centerz = min(centerz, z);
+						}
+						totalWeight = samplesPerPixel;
+						#endif
 
 						accum /= totalWeight;
 
@@ -199,6 +211,8 @@ int main() {
 
 		// flip the ping-pong flag
 		abuffer_read_layer = 1 - abuffer_read_layer;
+
+		#define USE_BILINEAR_HISTORY_SAMPLE 1
 
 		if (!draw)
 			// the graphics program version of createProgram() takes 5 sources; vertex, control, evaluation, geometry, fragment
@@ -284,6 +298,7 @@ int main() {
 					uniform int abuffer_read_layer;
 					uniform int frame;
 
+
 					vec4 sampleHistoryBuffer(vec2 uv) {
 						// return texture(abuffer, vec3(uv, abuffer_read_layer));
 						vec2 uvScreen = uv * textureSize(abuffer, 0).xy;
@@ -301,7 +316,9 @@ int main() {
 						return col;
 						*/
 						
-						//return texture(abuffer, vec3(uv, abuffer_read_layer), 0);
+						#ifdef USE_BILINEAR_HISTORY_SAMPLE
+						return texture(abuffer, vec3(uv, abuffer_read_layer), 0);
+						#endif
 
 						ivec2 pixelCoords = ivec2(uvScreen - vec2(0.5));
 						vec2 subPixel = fract(uvScreen - vec2(0.5));
@@ -393,8 +410,8 @@ int main() {
 						float worldSpaceDist = length(world0 - world1);
 						float screenSpaceDist = length((uv1 - uv0) * res);
 
-						//c0.rgb = clamp(c0.rgb, minbox, maxbox);
-						c0.rgb = clip_aabb(minbox, maxbox, vec4(clamp(cavg, minbox, maxbox), 0.), vec4(c0.rgb, 0.)).rgb;
+						c0.rgb = clamp(c0.rgb, minbox, maxbox);
+						//c0.rgb = clip_aabb(minbox, maxbox, vec4(clamp(cavg, minbox, maxbox), 0.), vec4(c0.rgb, 0.)).rgb;
 
 						// feedback weight from unbiased luminance diff (t.lottes)
 						// https://github.com/playdeadgames/temporal/blob/4795aa0007d464371abe60b7b28a1cf893a4e349/Assets/Shaders/TemporalReprojection.shader#L313
@@ -405,9 +422,9 @@ int main() {
 						float unbiased_weight = 1.0 - unbiased_diff;
 						float unbiased_weight_sqr = unbiased_weight * unbiased_weight;
 						float feedback = mix(0.0, 1.0, unbiased_weight_sqr);
-						feedback = clamp(0.95 - screenSpaceDist/20., 0., 1.);
-						//feedback = 0.9;
-						//feedback = 1. - 1./frame;
+						//feedback = clamp(0.95 - screenSpaceDist/20., 0., 1.);
+						//feedback = 0.999;
+						feedback = 1. - 1./frame;
 						//feedback = max(0., feedback - worldSpaceDist*100.);
 
 						if (frame == 0) feedback = 0;
@@ -419,6 +436,8 @@ int main() {
 						// c0.rgb = c0.rgb / (vec3(1.) + c0.rgb);
 						// c1.rgb = c1.rgb / (vec3(1.) + c1.rgb);
 						
+						c0.rgb = clamp(c0.rgb, vec3(0.), vec3(1.));
+						c1.rgb = clamp(c1.rgb, vec3(0.), vec3(1.));
 						vec3 c = feedback * max(vec3(0.), c0.xyz) + (1 - feedback) * max(vec3(0.), c1.xyz);
 
 						col.rgb = c.rgb;
@@ -455,6 +474,8 @@ int main() {
 
 		// this actually displays the rendered image
 		swapBuffers();
+
+		glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT); // TODO: not needed?
 
 		std::swap(cameras[0], cameras[1]);
 		frame++;
