@@ -50,6 +50,21 @@ layout(std140) uniform cameraArray {
 	CameraParams cameras[2];
 };
 
+uniform int pointBufferMaxElements;
+
+layout(std140) buffer pointBufferHeader {
+    int currentWriteOffset;
+};
+
+struct RgbPoint {
+    vec4 xyzw;
+    vec4 rgba;
+};
+
+layout(std140) buffer pointBuffer {
+    RgbPoint points[];
+};
+
 vec2 getThreadUV(uvec3 id) {
 	return vec2(id.xy) / 1024.0;
 }
@@ -244,6 +259,9 @@ void main() {
 
     for (int sample_id=0; sample_id < samplesPerPixel; sample_id++)
     {
+        int myPointOffset = atomicAdd(currentWriteOffset, 1);
+        myPointOffset %= pointBufferMaxElements;
+
         vec2 jitter = vec2(rand(), rand());
 
         vec2 uv = getThreadUV(gl_GlobalInvocationID);

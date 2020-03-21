@@ -1,6 +1,6 @@
 
 #include "testbench.h"
-
+#include <cinttypes>
 
 struct CameraParameters {
 	vec3 pos;
@@ -43,6 +43,12 @@ static void setWrapToClamp(GLuint tex) {
 	glTextureParameteri(tex, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 }
 
+struct RgbPoint {
+	vec4 xyzw;
+	vec4 rgba;
+};
+
+constexpr int MAX_POINT_COUNT = 5 * 1000 * 1000;
 
 int main() {
 
@@ -54,7 +60,7 @@ int main() {
 
 	// shader variables; could also initialize them here, but it's often a good idea to
 	// do that at the callsite (so input/output declarations are close to the bind code)
-	Program march, draw, sampleResolve;
+	Program march, draw, sampleResolve, headerUpdate;
 
 	Texture<GL_TEXTURE_2D_ARRAY> abuffer;
 	Texture<GL_TEXTURE_2D> gbuffer;
@@ -62,6 +68,8 @@ int main() {
 	Texture<GL_TEXTURE_2D_ARRAY> samplebuffer;
 	Texture<GL_TEXTURE_2D_ARRAY> jitterbuffer;
 	Buffer cameraData;
+	Buffer pointBufferHeader;
+	Buffer pointBuffer;
 
 	setWrapToClamp(abuffer);
 	setWrapToClamp(gbuffer);
@@ -80,7 +88,21 @@ int main() {
 	int abuffer_read_layer = 0, frame = 0;
 	CameraParameters cameras[2] = {};
 	glNamedBufferStorage(cameraData, sizeof(cameras), NULL, GL_DYNAMIC_STORAGE_BIT);
+	glNamedBufferStorage(pointBufferHeader, 4, NULL, GL_DYNAMIC_STORAGE_BIT); // TODO read bit only for debugging
+	glNamedBufferStorage(pointBuffer, sizeof(RgbPoint) * MAX_POINT_COUNT, NULL, GL_DYNAMIC_STORAGE_BIT); // TODO read bit only for debugging
 
+	int zero = 0;
+	glClearNamedBufferData(pointBufferHeader, GL_R32I, GL_RED_INTEGER, GL_INT, &zero);
+	glClearNamedBufferData(pointBuffer, GL_R32I, GL_RED_INTEGER, GL_INT, &zero);
+
+	int headerSize = -1;
+	glGetNamedBufferParameteriv(pointBufferHeader, GL_BUFFER_SIZE, &headerSize);
+	printf("pointBufferHeader size: %d bytes\n", headerSize);
+	GLint64 pointBufferSize = -1;
+	glGetNamedBufferParameteri64v(pointBuffer, GL_BUFFER_SIZE, &pointBufferSize);
+	int pointBufferMaxElements = static_cast<int>(pointBufferSize / sizeof(RgbPoint));
+	printf("pointBuffer size: %" PRId64 " bytes = %.3f MiB\n", pointBufferSize, pointBufferSize / 1024. / 1024.);
+	printf("pointBufferMaxElements: %d\n", pointBufferMaxElements);
 
 	while (loop()) // loop() stops if esc pressed or window closed
 	{
@@ -99,7 +121,10 @@ int main() {
 
 		glUniform1i("frame", frame);
 		glUniform1f("secs", secs);
+		glUniform1i("pointBufferMaxElements", pointBufferMaxElements);
 		bindBuffer("cameraArray", cameraData);
+		bindBuffer("pointBufferHeader", pointBufferHeader);
+		bindBuffer("pointBuffer", pointBuffer);
 		//bindImage("gbuffer", 0, gbuffer, GL_WRITE_ONLY, GL_RGBA32F);
 		bindImage("zbuffer", 0, zbuffer, GL_WRITE_ONLY, GL_R32F);
 		bindImage("samplebuffer", 0, samplebuffer, GL_WRITE_ONLY, SAMPLE_BUFFER_TYPE);
@@ -112,9 +137,37 @@ int main() {
 		// we're writing to an image in a shader, so we should have a barrier to ensure the writes finish
 		// before the next shader call (wasn't an issue on my hardware in this case, but you should always make sure
 		// to place the correct barriers when writing from compute shaders and reading in subsequent shaders)
-		glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+		glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_SHADER_STORAGE_BARRIER_BIT | GL_ATOMIC_COUNTER_BARRIER_BIT);
+
+		int currentWriteOffset = -1;
+		glGetNamedBufferSubData(pointBufferHeader, 0, 4, &currentWriteOffset);
+		printf("currentWriteOffset: %d\n", currentWriteOffset);
 
 		TimeStamp drawTime;
+
+		if (!headerUpdate) {
+			headerUpdate = createProgram(
+				GLSL(460,
+					layout(local_size_x = 16, local_size_y = 16) in;
+
+					layout(std140) buffer pointBufferHeader {
+						int currentWriteOffset;
+					};
+
+					uniform int pointBufferMaxElements;
+
+					void main() {
+						currentWriteOffset = currentWriteOffset % pointBufferMaxElements;
+					}
+				)
+			);
+		}
+
+		glUseProgram(headerUpdate);
+		glUniform1i("pointBufferMaxElements", pointBufferMaxElements);
+		bindBuffer("pointBufferHeader", pointBufferHeader);
+		glDispatchCompute(1, 1, 1);
+		glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
 		if (!sampleResolve) {
 			sampleResolve = createProgram(
@@ -322,7 +375,7 @@ int main() {
 					uniform sampler2D zbuffer;
 					uniform sampler2DArray abuffer;
 					layout(rgba32f) uniform image2DArray abuffer_image;
-					out vec4 col;
+					out vec4 outColor;
 					uniform int abuffer_read_layer;
 					uniform int frame;
 
@@ -392,112 +445,11 @@ int main() {
 
 
 					void main() {
-						vec4 c1 = fetchFromNewBuffer(ivec2(gl_FragCoord.xy));
+						vec4 c1 = texelFetch(gbuffer, ivec2(gl_FragCoord.xy), 0);
 						float z1 = c1.w;
-						const ivec2[8] deltas = {
-							ivec2(0, -1),  // direct neighbors
-							ivec2(-1, 0),
-							ivec2(1,  0),
-							ivec2(0,  1),
-							ivec2(-1, -1), // diagonals
-							ivec2(1, -1),
-							ivec2(-1, 1),
-							ivec2(1,  1),
-						};
-
-						float minz = 1e9;
-
-						for (int i = 0; i < 8; i++) {
-							float z = texelFetch(zbuffer, ivec2(gl_FragCoord.xy) + deltas[i], 0).x;
-							minz = min(minz, z);
-						}
-
-						struct Box
-						{
-							vec3 mn, mx;
-						};
-
-						Box allNeighs = { c1.rgb, c1.rgb };
-						Box crossNeighs = { c1.rgb, c1.rgb };		
-
-						vec3 cavg = c1.rgb;
-						for (int i = 0; i < 8; i++) {
-							vec4 cn = fetchFromNewBuffer(ivec2(gl_FragCoord.xy) + deltas[i]);
-							allNeighs.mn = min(allNeighs.mn, cn.rgb);
-							allNeighs.mx = max(allNeighs.mx, cn.rgb);
-							if (i < 4) {
-								crossNeighs.mn = min(crossNeighs.mn, cn.rgb);
-								crossNeighs.mx = max(crossNeighs.mx, cn.rgb);
-							}
-							cavg += cn.rgb;
-						}
-						cavg /= 9.;
-						
-						Box finalBox = {
-							0.5 * (allNeighs.mn + crossNeighs.mn),
-							0.5 * (allNeighs.mx + crossNeighs.mx),
-						};
-
-						ivec2 res = textureSize(gbuffer, 0).xy;
-
-						vec3 rayStartPos1, rayDir1;
-						vec2 uv1 = vec2(gl_FragCoord.xy) / res;
-						getCameraProjection(cameras[1], uv1, rayStartPos1, rayDir1);
-						vec3 world1 = rayStartPos1 + rayDir1 * z1;
-
-						vec2 uv0 = reprojectPoint(cameras[0], world1);
-						vec4 c0 = sampleHistoryBuffer(uv0);
-						float z0 = c0.w;
-						vec3 rayStartPos0, rayDir0;
-						getCameraProjection(cameras[0], uv0, rayStartPos0, rayDir0);
-						vec3 world0 = rayStartPos0 + rayDir0 * z0;
-
-						float worldSpaceDist = length(world0 - world1);
-						float screenSpaceDist = length((uv1 - uv0) * res);
-
-						#if 0
-						//c0.rgb = clamp(c0.rgb, finalBox.mn, finalBox.mx);
-						#else
-						//c0.rgb = clip_aabb(finalBox.mn, finalBox.mx, vec4(clamp(cavg, finalBox.mn, finalBox.mx), 0.), vec4(c0.rgb, 0.)).rgb;
-						#endif
-
-						c0.rgb = Perceptual_RGB(c0.rgb);
-						c1.rgb = Perceptual_RGB(c1.rgb);
-						
-						// feedback weight from unbiased luminance diff (t.lottes)
-						// https://github.com/playdeadgames/temporal/blob/4795aa0007d464371abe60b7b28a1cf893a4e349/Assets/Shaders/TemporalReprojection.shader#L313
-
-						float lum0 = rgb2Luminance(c0.rgb); // last frame's
-						float lum1 = rgb2Luminance(c1.rgb); // this frame's
-						float unbiased_diff = abs(lum0 - lum1) / max(lum0, max(lum1, 0.2));
-						float unbiased_weight = 1.0 - unbiased_diff;
-						float unbiased_weight_sqr = unbiased_weight * unbiased_weight;
-						float feedback = mix(0.0, 1.0, unbiased_weight_sqr);
-						//feedback = clamp(0.95 - screenSpaceDist/20., 0., 1.);
-						//feedback = 0.999;
-						feedback = 1. - 1./frame;
-						//feedback = max(0., feedback - worldSpaceDist*100.);
-
-						if (frame == 0) feedback = 0;
-						//if (z1 >= 1e9) feedback = 0;
-						//vec3 c = c1.rgb;
-						//c.rgb = c1.rgb;
-
-						// Tone map c1, c0 is already in LDR
-						// c0.rgb = c0.rgb / (vec3(1.) + c0.rgb);
-						// c1.rgb = c1.rgb / (vec3(1.) + c1.rgb);
-						
-						c0.rgb = clamp(c0.rgb, vec3(0.), vec3(1.));
-						c1.rgb = clamp(c1.rgb, vec3(0.), vec3(1.));
-						vec3 c = feedback * max(vec3(0.), c0.xyz) + (1 - feedback) * max(vec3(0.), c1.xyz);
-
-						col.rgb = c.rgb;
-						col = vec4(linearToSRGB(col.rgb), 1.);
-
-						// Inverse tone map, store linear values
-						// c = c / (vec3(1.) - c);
-
-						imageStore(abuffer_image, ivec3(gl_FragCoord.xy, 1 - abuffer_read_layer), vec4(c, z1));
+						vec3 c = c1.rgb;
+						c = c / (vec3(1.) + c);
+						outColor = vec4(linearToSRGB(c.rgb), 1.);
 					}
 				)
 			);
