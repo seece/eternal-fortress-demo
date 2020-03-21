@@ -212,7 +212,7 @@ int main() {
 		// flip the ping-pong flag
 		abuffer_read_layer = 1 - abuffer_read_layer;
 
-		#define USE_BILINEAR_HISTORY_SAMPLE 1
+		#define USE_BILINEAR_HISTORY_SAMPLE 0
 
 		if (!draw)
 			// the graphics program version of createProgram() takes 5 sources; vertex, control, evaluation, geometry, fragment
@@ -349,7 +349,7 @@ int main() {
 					{
 						vec2 uvScreen = uv * textureSize(abuffer, 0).xy;
 						
-						#ifdef USE_BILINEAR_HISTORY_SAMPLE
+						#if USE_BILINEAR_HISTORY_SAMPLE
 						return texture(abuffer, vec3(uv, abuffer_read_layer), 0);
 						#endif
 
@@ -456,16 +456,14 @@ int main() {
 						float screenSpaceDist = length((uv1 - uv0) * res);
 
 						#if 0
-						c0.rgb = clamp(c0.rgb, finalBox.mn, finalBox.mx);
+						//c0.rgb = clamp(c0.rgb, finalBox.mn, finalBox.mx);
 						#else
-						c0.rgb = clip_aabb(finalBox.mn, finalBox.mx, vec4(clamp(cavg, finalBox.mn, finalBox.mx), 0.), vec4(c0.rgb, 0.)).rgb;
+						//c0.rgb = clip_aabb(finalBox.mn, finalBox.mx, vec4(clamp(cavg, finalBox.mn, finalBox.mx), 0.), vec4(c0.rgb, 0.)).rgb;
 						#endif
-						//c0.rgb = clip_aabb(minbox, maxbox, vec4(clamp(cavg, minbox, maxbox), 0.), vec4(c0.rgb, 0.)).rgb;
+
 						c0.rgb = Perceptual_RGB(c0.rgb);
 						c1.rgb = Perceptual_RGB(c1.rgb);
 						
-						
-
 						// feedback weight from unbiased luminance diff (t.lottes)
 						// https://github.com/playdeadgames/temporal/blob/4795aa0007d464371abe60b7b28a1cf893a4e349/Assets/Shaders/TemporalReprojection.shader#L313
 

@@ -1,0 +1,30 @@
+- some way of keeping track of buffer binding type
+	- maybe i'm using it wrong? need to type rgb32f in many places
+- inline shader errors have no names and line numbers are relative instead of absolute
+	- could have a #line directive at the beginning of inline shaders. but might be confusing?
+	- now only the line number of the GLSL macro gets reported
+- shader includes would be nice
+- recompiling main.cpp takes a few seconds...
+- lookAt creates, worldToCam, and not camToWorld, matrix? right?
+
+
+other notes:
+- integer atomics for fixed point RGB accumulation are annoying because you'd need "planar" format with three separate images
+	- maybe you could bind one "plane"?
+	- or you use SSBO atomics with uvec4 type and accumulate each component atomically
+- can't use length(world0 - world1) for TAA pixel rejection because silhouettes start aliasing very visibly
+- TAA blinking bug: Z-buffer has noise so some accumulation texture lookups will be off
+	-> it's not this. the blinking is caused by highly detailed geometry that makes the input signal very aliased
+	   some rays pass close to dark geometry and hit a bright wall behind. each time this happens the new sample
+	   will have very different z value and a very bright value
+		-> store how many values each abuffer texel has accumulated and weight using that?
+		-> this shouldn't appear when accumulating a single image with 1/framenum weight! but still it does?
+	- SOLUTION: neighborhood clipping causes "pixel crawl" when using just 3x3 neighbors
+- PROBLEM: converges to a weird blocky pattern
+- should reject samples outside image:
+	// Reprojected sample offscreen, nothing to sample, start constructing new history.
+	if(screen.x < 0.0 || screen.x > 1.0 || screen.y < 0.0 || screen.y > 1.0)
+	{
+		FragColor = texture(Texture, uv);
+	}
+https://youtu.be/34fA3fFuqw0?t=124

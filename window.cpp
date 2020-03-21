@@ -10,6 +10,7 @@ const int GL_WINDOW_ATTRIBUTES[] = {
 	WGL_DRAW_TO_WINDOW_ARB, GL_TRUE,
 	WGL_SUPPORT_OPENGL_ARB, GL_TRUE,
 	WGL_DOUBLE_BUFFER_ARB, GL_TRUE,
+	//WGL_FRAMEBUFFER_SRGB_CAPABLE_ARB, GL_TRUE,
 
 	WGL_PIXEL_TYPE_ARB, WGL_TYPE_RGBA_ARB,
 	WGL_COLOR_BITS_ARB, 32,
@@ -20,7 +21,7 @@ const int GL_CONTEXT_ATTRIBUTES[] = {
 	WGL_CONTEXT_MAJOR_VERSION_ARB, 4,
 	WGL_CONTEXT_MINOR_VERSION_ARB, 6,
 	WGL_CONTEXT_PROFILE_MASK_ARB, WGL_CONTEXT_CORE_PROFILE_BIT_ARB,
-	//WGL_CONTEXT_FLAGS_ARB, WGL_CONTEXT_DEBUG_BIT_ARB,
+	WGL_CONTEXT_FLAGS_ARB, WGL_CONTEXT_DEBUG_BIT_ARB,
 0 };
 
 HWND wnd = nullptr;
@@ -274,8 +275,7 @@ void setupGL(int width, int height, const std::string& title, bool fullscreen, b
 	DestroyWindow(tempWnd);
 
 	// what GL did we get?
-	printf("gl  %s\non  %s\nby  %s\nsl  %s\n", glGetString(GL_VERSION), glGetString(GL_RENDERER), glGetString(GL_VENDOR), glGetString(GL_SHADING_LANGUAGE_VERSION));
-
+	printf("gl  %s\non  %s\nby  %s\nsl  %s\n", glGetString(GL_VERSION), glGetString(GL_RENDERER), glGetString(GL_VENDOR),glGetString(GL_SHADING_LANGUAGE_VERSION));
 	loadgl();
 
 	// enable debug output

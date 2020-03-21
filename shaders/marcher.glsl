@@ -232,8 +232,8 @@ float march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int num_i
 }
 
 void main() {
-    //srand(frame, uint(gl_GlobalInvocationID.x), uint(gl_GlobalInvocationID.y));
-    srand(frame, 0, 0);
+    srand(frame, uint(gl_GlobalInvocationID.x), uint(gl_GlobalInvocationID.y));
+    //srand(frame, 0, 0);
     jenkins_mix();
     jenkins_mix();
     ivec2 res = imageSize(zbuffer).xy;
