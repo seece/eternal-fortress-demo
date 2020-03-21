@@ -60,7 +60,7 @@ int main() {
 
 	// shader variables; could also initialize them here, but it's often a good idea to
 	// do that at the callsite (so input/output declarations are close to the bind code)
-	Program march, draw, sampleResolve, headerUpdate;
+	Program march, draw, sampleResolve, headerUpdate, pointSplat;
 
 	Texture<GL_TEXTURE_2D_ARRAY> abuffer;
 	Texture<GL_TEXTURE_2D> gbuffer;
@@ -109,7 +109,7 @@ int main() {
 		// timestamp objects make gl queries at those locations; you can substract them to get the time
 		TimeStamp start;
 		float secs = frame / 60.f;
-		cameraPath(fmod(0., 2.)+30., cameras[1]);
+		cameraPath(secs, cameras[1]);
 		glNamedBufferSubData(cameraData, 0, sizeof(cameras), &cameras);
 
 		glDisable(GL_BLEND);
@@ -169,96 +169,200 @@ int main() {
 		glDispatchCompute(1, 1, 1);
 		glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
-		if (!sampleResolve) {
-			sampleResolve = createProgram(
+		if (!pointSplat) {
+			pointSplat = createProgram(
 				GLSL(460,
-					layout(local_size_x = 16, local_size_y = 16) in;
+					layout(local_size_x = 128, local_size_y = 1) in;
 
-					uniform sampler2DArray samplebuffer;
-					uniform sampler2DArray jitterbuffer;
-					uniform sampler2D zbuffer;
-					layout(rgba32f) uniform image2D gbuffer;
+			struct CameraParams {
+				vec3 pos;
+				float padding0;
+				vec3 dir;
+				float nearplane;
+				vec3 up;
+				float padding2;
+				vec3 right;
+				float padding3;
+			};
 
-					void main() {
-						ivec2 ij = ivec2(gl_GlobalInvocationID.xy);
-						int samplesPerPixel = textureSize(samplebuffer, 0).z;
-						vec3 accum = vec3(0.);
-						float totalWeight = 1e-6;
+			struct RgbPoint {
+				vec4 xyzw;
+				vec4 rgba;
+			};
 
-						float centerz = texelFetch(zbuffer, ij, 0).x;
+			uniform int pointBufferMaxElements;
+			uniform int numberOfPointsToSplat;
 
-						#ifdef USE_PROPER_FILTER
-						
-						float aroundzMax = 0.;
-						float aroundzMin = 1e9;
-						vec3 around = vec3(0.);
-						for (int i = 0; i < samplesPerPixel; i++) {
-							for (int y = -1; y <= 1; y++) {
-								for (int x = -1; x <= 1; x++) {
-									ivec2 delta = ivec2(x, y);
-									ivec2 coord = ij + delta;
-								
-									vec4 c = texelFetch(samplebuffer, ivec3(coord, i), 0);
-									float z = texelFetch(zbuffer, coord, 0).x;
+			layout(std140) uniform cameraArray {
+				CameraParams cameras[2];
+			};
 
-									// Tonemap colors already here
-									c.rgb = c.rgb / (vec3(1.) + c.rgb);
-									
-									vec2 jitter = texelFetch(jitterbuffer, ivec3(coord, i), 0).xy;
-									jitter -= vec2(0.5);
+			layout(std140) buffer pointBufferHeader {
+				int currentWriteOffset;
+			};
+			
+			layout(std140) buffer pointBuffer {
+				RgbPoint points[];
+			};
 
-									if (x == 0 && y == 0) {
-										centerz = z;
-									} 
-									else {
-										aroundzMax = max(aroundzMax, z);
-										aroundzMin = min(aroundzMin, z);
-										around += c.rgb;
-									}
+			layout(rgba32f) uniform image2D gbuffer;
 
-									vec2 sampleCoord = vec2(x, y) + jitter;
-									float d = length(sampleCoord);
-									float weight = max(0., 1.25 - length(d));
-									//weight = 1.0;
-									//weight = exp(-2.29 * pow(length(sampleCoord), 2.)); // PRMan Gaussian fit to Blackman-Harris 3.
-									accum += weight * c.rgb;
-									totalWeight += weight;
-								}
-							}
-						}
-						#else 
-						for (int i = 0; i < samplesPerPixel; i++) {
-							vec4 c = texelFetch(samplebuffer, ivec3(ij, i), 0);
-							float z = texelFetch(zbuffer, ij, 0).x;
-							accum += c.rgb;
-							centerz = min(centerz, z);
-						}
-						totalWeight = samplesPerPixel;
-						#endif
+			vec3 reprojectPoint(CameraParams cam, vec3 p) {
+				vec3 op = p - cam.pos;
+				float n = length(cam.dir);
+				float z = dot(cam.dir, op) / n;
+				vec3 pp = (op * n) / z;
+				vec2 plane = vec2(
+					dot(pp, cam.right) / dot(cam.right, cam.right),
+					dot(pp, cam.up) / dot(cam.up, cam.up)
+				);
+				return vec3(plane + vec2(0.5), z);
+			}
 
-						accum /= totalWeight;
+			void main() {
+				unsigned int invocationIdx = gl_GlobalInvocationID.y * (gl_WorkGroupSize.x * gl_NumWorkGroups.x) + gl_GlobalInvocationID.x;
+				unsigned int baseIdx;
+				
+				// We want to process "numberOfPointsToSplat" indices in a way that wraps around the buffer.
+				if (currentWriteOffset >= numberOfPointsToSplat) {
+					baseIdx = currentWriteOffset - numberOfPointsToSplat;
+				} else {
+					baseIdx = pointBufferMaxElements - (numberOfPointsToSplat - currentWriteOffset);
+				}
 
-						float outz = centerz;
+				unsigned int index = (baseIdx + invocationIdx) % pointBufferMaxElements;
+				vec4 pos = points[index].xyzw;
+				vec4 color = points[index].rgba;
 
-						/*if (centerz > aroundzMax) {
-							accum = around / 8.;
-							outz = aroundzMin;
-						}*/
+				// Raymarcher never produces pure (0, 0, 0) hits.
+				if (pos == vec4(0.))
+					return;
 
-						imageStore(gbuffer, ij, vec4(accum, outz));
-					}
-			)
-			);
+				//int x = int(index) % 1024;
+				//int y = int(index) / 1024;
+
+				vec3 camSpace = reprojectPoint(cameras[1], pos.rgb);
+
+				if (camSpace.z <= 0.)
+				{
+					return;
+				}
+
+				int x = int(camSpace.x * 1024);
+				int y = int(camSpace.y * 1024);
+
+				imageStore(gbuffer, ivec2(x, y), vec4(color.rgb, 1));
+			}
+			));
 		}
 
-		glUseProgram(sampleResolve);
+		int numberOfPointsToSplat = 4 * 1000 * 1000;
+
+		glUseProgram(pointSplat);
 		bindImage("gbuffer", 0, gbuffer, GL_WRITE_ONLY, GL_RGBA32F);
-		bindTexture("zbuffer", zbuffer);
-		bindTexture("samplebuffer", samplebuffer);
-		bindTexture("jitterbuffer", jitterbuffer);
-		glDispatchCompute(64, 64, 1);
+		glUniform1i("pointBufferMaxElements", pointBufferMaxElements);
+		glUniform1i("numberOfPointsToSplat", numberOfPointsToSplat);
+		bindBuffer("pointBufferHeader", pointBufferHeader);
+		bindBuffer("pointBuffer", pointBuffer);
+		bindBuffer("cameraArray", cameraData);
+		glDispatchCompute(numberOfPointsToSplat / 128, 1, 1);
 
 		glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+
+		TimeStamp splatTime;
+
+		if (false) {
+			if (!sampleResolve) {
+				sampleResolve = createProgram(
+					GLSL(460,
+						layout(local_size_x = 16, local_size_y = 16) in;
+
+				uniform sampler2DArray samplebuffer;
+				uniform sampler2DArray jitterbuffer;
+				uniform sampler2D zbuffer;
+				layout(rgba32f) uniform image2D gbuffer;
+
+				void main() {
+					ivec2 ij = ivec2(gl_GlobalInvocationID.xy);
+					int samplesPerPixel = textureSize(samplebuffer, 0).z;
+					vec3 accum = vec3(0.);
+					float totalWeight = 1e-6;
+
+					float centerz = texelFetch(zbuffer, ij, 0).x;
+
+#ifdef USE_PROPER_FILTER
+
+					float aroundzMax = 0.;
+					float aroundzMin = 1e9;
+					vec3 around = vec3(0.);
+					for (int i = 0; i < samplesPerPixel; i++) {
+						for (int y = -1; y <= 1; y++) {
+							for (int x = -1; x <= 1; x++) {
+								ivec2 delta = ivec2(x, y);
+								ivec2 coord = ij + delta;
+
+								vec4 c = texelFetch(samplebuffer, ivec3(coord, i), 0);
+								float z = texelFetch(zbuffer, coord, 0).x;
+
+								// Tonemap colors already here
+								c.rgb = c.rgb / (vec3(1.) + c.rgb);
+
+								vec2 jitter = texelFetch(jitterbuffer, ivec3(coord, i), 0).xy;
+								jitter -= vec2(0.5);
+
+								if (x == 0 && y == 0) {
+									centerz = z;
+								}
+								else {
+									aroundzMax = max(aroundzMax, z);
+									aroundzMin = min(aroundzMin, z);
+									around += c.rgb;
+								}
+
+								vec2 sampleCoord = vec2(x, y) + jitter;
+								float d = length(sampleCoord);
+								float weight = max(0., 1.25 - length(d));
+								//weight = 1.0;
+								//weight = exp(-2.29 * pow(length(sampleCoord), 2.)); // PRMan Gaussian fit to Blackman-Harris 3.
+								accum += weight * c.rgb;
+								totalWeight += weight;
+							}
+						}
+					}
+#else 
+					for (int i = 0; i < samplesPerPixel; i++) {
+						vec4 c = texelFetch(samplebuffer, ivec3(ij, i), 0);
+						float z = texelFetch(zbuffer, ij, 0).x;
+						accum += c.rgb;
+						centerz = min(centerz, z);
+					}
+					totalWeight = samplesPerPixel;
+#endif
+
+					accum /= totalWeight;
+
+					float outz = centerz;
+
+					/*if (centerz > aroundzMax) {
+						accum = around / 8.;
+						outz = aroundzMin;
+					}*/
+
+					imageStore(gbuffer, ij, vec4(accum, outz));
+				}
+				)
+				);
+			}
+
+			glUseProgram(sampleResolve);
+			bindImage("gbuffer", 0, gbuffer, GL_WRITE_ONLY, GL_RGBA32F);
+			bindTexture("zbuffer", zbuffer);
+			bindTexture("samplebuffer", samplebuffer);
+			bindTexture("jitterbuffer", jitterbuffer);
+			glDispatchCompute(64, 64, 1);
+
+			glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+		}
 
 		TimeStamp resolveTime;
 
@@ -472,8 +576,8 @@ int main() {
 		// print the timing (word of warning; this forces a cpu-gpu synchronization)
 		font.drawText(L"Total: " + std::to_wstring(end - start), 10.f, 10.f, 15.f); // text, x, y, font size
 		font.drawText(L"Draw: " + std::to_wstring(drawTime - start), 10.f, 25.f, 15.f);
-		font.drawText(L"Resolve: " + std::to_wstring(resolveTime - drawTime), 10.f, 40.f, 15.f); 
-		font.drawText(L"PostProc: " + std::to_wstring(end - resolveTime), 10.f, 55.f, 15.f);
+		font.drawText(L"Splat: " + std::to_wstring(splatTime - drawTime), 10.f, 40.f, 15.f);
+		font.drawText(L"PostProc: " + std::to_wstring(end - splatTime), 10.f, 55.f, 15.f);
 
 		// this actually displays the rendered image
 		swapBuffers();

@@ -37,23 +37,13 @@ layout(rg8) uniform image2DArray jitterbuffer;
 
 struct CameraParams {
     vec3 pos;
-	float padding0;
-	vec3 dir;
-	float nearplane;
-	vec3 up;
-	float padding2;
-	vec3 right;
-	float padding3;
-};
-
-layout(std140) uniform cameraArray {
-	CameraParams cameras[2];
-};
-
-uniform int pointBufferMaxElements;
-
-layout(std140) buffer pointBufferHeader {
-    int currentWriteOffset;
+    float padding0;
+    vec3 dir;
+    float nearplane;
+    vec3 up;
+    float padding2;
+    vec3 right;
+    float padding3;
 };
 
 struct RgbPoint {
@@ -61,12 +51,22 @@ struct RgbPoint {
     vec4 rgba;
 };
 
+uniform int pointBufferMaxElements;
+
+layout(std140) uniform cameraArray {
+    CameraParams cameras[2];
+};
+
+layout(std140) buffer pointBufferHeader {
+    int currentWriteOffset;
+};
+
 layout(std140) buffer pointBuffer {
     RgbPoint points[];
 };
 
 vec2 getThreadUV(uvec3 id) {
-	return vec2(id.xy) / 1024.0;
+    return vec2(id.xy) / 1024.0;
 }
 
 float PIXEL_RADIUS;
@@ -304,6 +304,11 @@ void main() {
                 float fog = pow(min(1., distance / 10.), 4.0);
                 color = mix(color, vec3(0.5, 0., 0.), fog);
                 break;
+        }
+
+        if (hitmat != MATERIAL_SKY) {
+            points[myPointOffset].xyzw = vec4(p, 0.);
+            points[myPointOffset].rgba = vec4(color, 1.);
         }
 
         minDepth = min(minDepth, zdepth);
