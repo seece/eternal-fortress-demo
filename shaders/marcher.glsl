@@ -248,7 +248,6 @@ float march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int num_i
 
 void main() {
     srand(frame, uint(gl_GlobalInvocationID.x), uint(gl_GlobalInvocationID.y));
-    //srand(frame, 0, 0);
     jenkins_mix();
     jenkins_mix();
     ivec2 res = imageSize(zbuffer).xy;
@@ -301,8 +300,8 @@ void main() {
                 color = base * sun * vec3(shine);
                 //color = base * vec3(shine);
                 color = clamp(color, vec3(0.), vec3(10.));
-                float fog = pow(min(1., distance / 10.), 4.0);
-                color = mix(color, vec3(0.5, 0., 0.), fog);
+                // float fog = pow(min(1., distance / 10.), 4.0);
+                // color = mix(color, vec3(0.5, 0., 0.), fog);
                 break;
         }
 
@@ -310,11 +309,6 @@ void main() {
             points[myPointOffset].xyzw = vec4(p, 0.);
             points[myPointOffset].rgba = vec4(color, 1.);
         }
-
-        minDepth = min(minDepth, zdepth);
-
-        imageStore(samplebuffer, ivec3(gl_GlobalInvocationID.xy, sample_id), vec4(color, 0.));
-        imageStore(jitterbuffer, ivec3(gl_GlobalInvocationID.xy, sample_id), vec4(jitter, 0., 0.));
     }
 
     imageStore(zbuffer, ivec2(gl_GlobalInvocationID.xy), vec4(minDepth));

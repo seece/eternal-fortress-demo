@@ -254,9 +254,6 @@ int main() {
 				if (pos == vec4(0.))
 					return;
 
-				//int x = int(index) % 1024;
-				//int y = int(index) / 1024;
-
 				vec3 camSpace = reprojectPoint(cameras[1], pos.rgb);
 
 				if (any(lessThan(camSpace, vec3(0.))))
@@ -273,17 +270,22 @@ int main() {
 
 				int pixelIdx = screenSize.x * y + x;
 				
+				float distance = length(pos.xyz - cameras[1].pos);
+				float fog = pow(min(1., distance / 10.), 4.0);
+				color.rgb = mix(color.rgb, vec3(0.5, 0., 0.), fog);
+
 				color.rgb = clamp(color.rgb, vec3(0.), vec3(10.));
-				uvec3 icolor = uvec3(color.rgb * 1000);
+
+				float weight = 1.;
+
+				uvec3 icolor = uvec3(weight * 1000 * color.rgb);
 				atomicAdd(colors[3 * pixelIdx + 0], icolor.r);
 				atomicAdd(colors[3 * pixelIdx + 1], icolor.g);
 				atomicAdd(colors[3 * pixelIdx + 2], icolor.b);
-				atomicAdd(sampleWeights[pixelIdx], 100);
 
-				//colors[invocationIdx] = 1000;
-				//sampleWeights[invocationIdx] = 100;
+				
 
-				imageStore(gbuffer, ivec2(x, y), vec4(color.rgb, 1));
+				atomicAdd(sampleWeights[pixelIdx], int(100 * weight));
 			}
 			));
 		}
@@ -481,11 +483,6 @@ int main() {
 						), vec3(0.), vec3(1.));
 					}
 
-					uniform sampler2D gbuffer;
-					uniform sampler2D zbuffer;
-					uniform sampler2DArray abuffer;
-					layout(rgba32f) uniform image2DArray abuffer_image;
-
 					layout(std140) uniform cameraArray { CameraParams cameras[2]; };
 					layout(std430) buffer colorBuffer { uint colors[]; };
 					layout(std430) buffer sampleWeightBuffer { uint sampleWeights[]; };
@@ -523,10 +520,6 @@ int main() {
 
 		glUseProgram(draw);
 
-		bindTexture("gbuffer", gbuffer);
-		bindTexture("zbuffer", zbuffer);
-		bindTexture("abuffer", abuffer);
-		bindImage("abuffer_image", 0, abuffer, GL_WRITE_ONLY, GL_RGBA32F);
 		glUniform1i("frame", frame);
 		glUniform1f("secs", secs);
 		glUniform2i("screenSize", screenw, screenh);
