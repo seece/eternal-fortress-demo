@@ -251,16 +251,20 @@ int main() {
 				vec4 color = points[index].rgba;
 
 				// Raymarcher never produces pure (0, 0, 0) hits.
-				//if (pos == vec4(0.))
-				//	return;
+				if (pos == vec4(0.))
+					return;
 
 				//int x = int(index) % 1024;
 				//int y = int(index) / 1024;
 
 				vec3 camSpace = reprojectPoint(cameras[1], pos.rgb);
 
-				if (camSpace.z <= 0.)
+				if (any(lessThan(camSpace, vec3(0.))))
 				{
+					return;
+				}
+
+				if (any(greaterThan(camSpace.xy, vec2(1.)))) {
 					return;
 				}
 
