@@ -70,12 +70,12 @@ int main() {
 	Buffer cameraData;
 	Buffer pointBufferHeader;
 	Buffer pointBuffer;
+	Buffer colorBuffer, sampleWeightBuffer;
 
 	setWrapToClamp(abuffer);
 	setWrapToClamp(gbuffer);
 	setWrapToClamp(zbuffer);
 	setWrapToClamp(samplebuffer);
-
 
 	int renderw = screenw, renderh = screenh;
 
@@ -90,10 +90,17 @@ int main() {
 	glNamedBufferStorage(cameraData, sizeof(cameras), NULL, GL_DYNAMIC_STORAGE_BIT);
 	glNamedBufferStorage(pointBufferHeader, 4, NULL, GL_DYNAMIC_STORAGE_BIT); // TODO read bit only for debugging
 	glNamedBufferStorage(pointBuffer, sizeof(RgbPoint) * MAX_POINT_COUNT, NULL, GL_DYNAMIC_STORAGE_BIT); // TODO read bit only for debugging
+	glNamedBufferStorage(colorBuffer, screenw * screenh * 3 * sizeof(int), NULL, 0);
+	glNamedBufferStorage(sampleWeightBuffer, screenw * screenh * sizeof(int), NULL, 0);
 
 	int zero = 0;
 	glClearNamedBufferData(pointBufferHeader, GL_R32I, GL_RED_INTEGER, GL_INT, &zero);
 	glClearNamedBufferData(pointBuffer, GL_R32I, GL_RED_INTEGER, GL_INT, &zero);
+	int thousand = 1000;
+	int hundred = 100;
+
+	glClearNamedBufferData(colorBuffer, GL_R32UI, GL_RED_INTEGER, GL_UNSIGNED_INT, &thousand);
+	glClearNamedBufferData(sampleWeightBuffer, GL_R32UI, GL_RED_INTEGER, GL_UNSIGNED_INT, &hundred);
 
 	int headerSize = -1;
 	glGetNamedBufferParameteriv(pointBufferHeader, GL_BUFFER_SIZE, &headerSize);
@@ -192,17 +199,26 @@ int main() {
 
 			uniform int pointBufferMaxElements;
 			uniform int numberOfPointsToSplat;
+			uniform ivec2 screenSize;
 
 			layout(std140) uniform cameraArray {
 				CameraParams cameras[2];
 			};
 
-			layout(std140) buffer pointBufferHeader {
+			layout(std430) buffer pointBufferHeader {
 				int currentWriteOffset;
 			};
 			
-			layout(std140) buffer pointBuffer {
+			layout(std430) buffer pointBuffer {
 				RgbPoint points[];
+			};
+
+			layout(std430) buffer colorBuffer {
+				uint colors[];
+			};
+
+			layout(std430) buffer sampleWeightBuffer {
+				uint sampleWeights[];
 			};
 
 			layout(rgba32f) uniform image2D gbuffer;
@@ -228,15 +244,15 @@ int main() {
 					baseIdx = currentWriteOffset - numberOfPointsToSplat;
 				} else {
 					baseIdx = pointBufferMaxElements - (numberOfPointsToSplat - currentWriteOffset);
-				}
+				};
 
 				unsigned int index = (baseIdx + invocationIdx) % pointBufferMaxElements;
 				vec4 pos = points[index].xyzw;
 				vec4 color = points[index].rgba;
 
 				// Raymarcher never produces pure (0, 0, 0) hits.
-				if (pos == vec4(0.))
-					return;
+				//if (pos == vec4(0.))
+				//	return;
 
 				//int x = int(index) % 1024;
 				//int y = int(index) / 1024;
@@ -248,8 +264,20 @@ int main() {
 					return;
 				}
 
-				int x = int(camSpace.x * 1024);
-				int y = int(camSpace.y * 1024);
+				int x = int(camSpace.x * screenSize.x);
+				int y = int(camSpace.y * screenSize.y);
+
+				int pixelIdx = screenSize.x * y + x;
+				
+				color.rgb = clamp(color.rgb, vec3(0.), vec3(10.));
+				uvec3 icolor = uvec3(color.rgb * 1000);
+				atomicAdd(colors[3 * pixelIdx + 0], icolor.r);
+				atomicAdd(colors[3 * pixelIdx + 1], icolor.g);
+				atomicAdd(colors[3 * pixelIdx + 2], icolor.b);
+				atomicAdd(sampleWeights[pixelIdx], 100);
+
+				//colors[invocationIdx] = 1000;
+				//sampleWeights[invocationIdx] = 100;
 
 				imageStore(gbuffer, ivec2(x, y), vec4(color.rgb, 1));
 			}
@@ -259,15 +287,19 @@ int main() {
 		int numberOfPointsToSplat = 4 * 1000 * 1000;
 
 		glUseProgram(pointSplat);
-		bindImage("gbuffer", 0, gbuffer, GL_WRITE_ONLY, GL_RGBA32F);
+		bindImage("gbuffer", 0, gbuffer, GL_READ_WRITE, GL_RGBA32F);
 		glUniform1i("pointBufferMaxElements", pointBufferMaxElements);
 		glUniform1i("numberOfPointsToSplat", numberOfPointsToSplat);
+		int screenSize[] = { screenw, screenh };
+		glUniform2i("screenSize", screenw, screenh);
 		bindBuffer("pointBufferHeader", pointBufferHeader);
 		bindBuffer("pointBuffer", pointBuffer);
+		bindBuffer("colorBuffer", colorBuffer);
+		bindBuffer("sampleWeightBuffer", sampleWeightBuffer);
 		bindBuffer("cameraArray", cameraData);
 		glDispatchCompute(numberOfPointsToSplat / 128, 1, 1);
 
-		glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+		glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_SHADER_STORAGE_BARRIER_BIT | GL_ATOMIC_COUNTER_BARRIER_BIT);
 
 		TimeStamp splatTime;
 
@@ -394,10 +426,6 @@ int main() {
 						float padding3;
 					};
 
-					layout(std140) uniform cameraArray {
-						CameraParams cameras[2];
-					};
-
 					// https://gamedev.stackexchange.com/a/148088
 					vec3 linearToSRGB(vec3 linearRGB)
 					{
@@ -406,32 +434,6 @@ int main() {
 						vec3 lower = linearRGB * vec3(12.92);
 
 						return mix(higher, lower, cutoff);
-					}
-
-					// source: https://github.com/playdeadgames/temporal/blob/4795aa0007d464371abe60b7b28a1cf893a4e349/Assets/Shaders/TemporalReprojection.shader#L122
-					vec4 clip_aabb(vec3 aabb_min, vec3 aabb_max, vec4 p, vec4 q)
-					{
-						vec4 r = q - p;
-						vec3 rmax = aabb_max - p.xyz;
-						vec3 rmin = aabb_min - p.xyz;
-
-						const float eps = 0.00000001f;
-
-						if (r.x > rmax.x + eps)
-							r *= (rmax.x / r.x);
-						if (r.y > rmax.y + eps)
-							r *= (rmax.y / r.y);
-						if (r.z > rmax.z + eps)
-							r *= (rmax.z / r.z);
-
-						if (r.x < rmin.x - eps)
-							r *= (rmin.x / r.x);
-						if (r.y < rmin.y - eps)
-							r *= (rmin.y / r.y);
-						if (r.z < rmin.z - eps)
-							r *= (rmin.z / r.z);
-
-						return p + r;
 					}
 
 					void getCameraProjection(CameraParams cam, vec2 uv, out vec3 outPos, out vec3 outDir) {
@@ -479,81 +481,38 @@ int main() {
 					uniform sampler2D zbuffer;
 					uniform sampler2DArray abuffer;
 					layout(rgba32f) uniform image2DArray abuffer_image;
+
+					layout(std140) uniform cameraArray { CameraParams cameras[2]; };
+					layout(std430) buffer colorBuffer { uint colors[]; };
+					layout(std430) buffer sampleWeightBuffer { uint sampleWeights[]; };
+
 					out vec4 outColor;
-					uniform int abuffer_read_layer;
+					uniform ivec2 screenSize;
 					uniform int frame;
 
-					// Convert color into a perceptual clipping space
-					vec3 RGB_Perceptual(vec3 x)
-					{
-						return RGB_YCoCg(x);
-					}
-
-					// Convert color back to RGB
-					vec3 Perceptual_RGB(vec3 x)
-					{
-						return YCoCg_RGB(x);
-					}
-
-					vec4 fetchFromNewBuffer(ivec2 coord)
-					{
-						vec4 c = texelFetch(gbuffer, coord, 0);
-						c.rgb = RGB_Perceptual(c.rgb);
-						return c;
-					}
-
-					vec4 sampleHistoryBuffer(vec2 uv)
-					{
-						vec2 uvScreen = uv * textureSize(abuffer, 0).xy;
-						
-						#if USE_BILINEAR_HISTORY_SAMPLE
-						return texture(abuffer, vec3(uv, abuffer_read_layer), 0);
-						#endif
-
-						ivec2 pixelCoords = ivec2(uvScreen - vec2(0.5));
-						vec2 subPixel = fract(uvScreen - vec2(0.5));
-
-						float totalWeight = 0.;
-						vec3 color = vec3(0.);
-						float z = 1e9;
-
-						for (int y = -1; y <= 1; y++) {
-							for (int x = -1; x <= 1; x++) {
-
-								ivec2 delta = ivec2(x, y);
-
-								// "pos" in the same coordinate system as "subPixel."
-								// This means e.g. (-1, 0) is at the center of the texel on the left.
-								vec2 pos = vec2(x, y);
-
-								vec4 c = texelFetch(abuffer, ivec3(pixelCoords + delta, abuffer_read_layer), 0);
-								
-								// Tent filter based on the distance from the pixel center.
-								float d = length(pos - subPixel);
-								float weight = max(0., 1.0 - d); //TODO 1.0-d is like bilinear tap
-								//weight = pow(weight, .5);
-								//weight = 1.;
-
-								color += weight * c.rgb;
-								totalWeight += abs(weight);
-								z += c.w;
-								//z = min(z, c.w); // TODO use this instead of average
-							}
-						}
-
-						color /= totalWeight;
-						z /= totalWeight;
-						
-						return vec4(RGB_Perceptual(color), z);
-					}
-
-
 					void main() {
-						vec4 c1 = texelFetch(gbuffer, ivec2(gl_FragCoord.xy), 0);
-						float z1 = c1.w;
-						vec3 c = c1.rgb;
+						int pixelIdx = screenSize.x * int(gl_FragCoord.y) + int(gl_FragCoord.x);
+
+						uvec3 icolor = uvec3(
+							colors[3 * pixelIdx + 0],
+							colors[3 * pixelIdx + 1],
+							colors[3 * pixelIdx + 2]
+						);
+
+						float totalWeight = float(sampleWeights[pixelIdx]) / 100.;
+						vec3 color = vec3(icolor) / 1000.;
+						color /= totalWeight;
+
+						vec3 c = color;
+
 						c = c / (vec3(1.) + c);
 						outColor = vec4(linearToSRGB(c.rgb), 1.);
+
+						// Clear the accumulation buffer
+						colors[3 * pixelIdx + 0] = 0;
+						colors[3 * pixelIdx + 1] = 0;
+						colors[3 * pixelIdx + 2] = 0;
+						sampleWeights[pixelIdx] = 0;
 					}
 				)
 			);
@@ -564,9 +523,11 @@ int main() {
 		bindTexture("zbuffer", zbuffer);
 		bindTexture("abuffer", abuffer);
 		bindImage("abuffer_image", 0, abuffer, GL_WRITE_ONLY, GL_RGBA32F);
-		glUniform1i("abuffer_read_layer", abuffer_read_layer);
 		glUniform1i("frame", frame);
 		glUniform1f("secs", secs);
+		glUniform2i("screenSize", screenw, screenh);
+		bindBuffer("colorBuffer", colorBuffer);
+		bindBuffer("sampleWeightBuffer", sampleWeightBuffer);
 		bindBuffer("cameraArray", cameraData);
 		glDrawArrays(GL_TRIANGLES, 0, 3);
 
@@ -582,7 +543,7 @@ int main() {
 		// this actually displays the rendered image
 		swapBuffers();
 
-		glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT); // TODO: not needed?
+		glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 
 		std::swap(cameras[0], cameras[1]);
 		frame++;

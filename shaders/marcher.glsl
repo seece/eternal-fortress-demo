@@ -57,11 +57,11 @@ layout(std140) uniform cameraArray {
     CameraParams cameras[2];
 };
 
-layout(std140) buffer pointBufferHeader {
+layout(std430) buffer pointBufferHeader {
     int currentWriteOffset;
 };
 
-layout(std140) buffer pointBuffer {
+layout(std430) buffer pointBuffer {
     RgbPoint points[];
 };
 
