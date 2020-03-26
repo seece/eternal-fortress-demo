@@ -48,7 +48,7 @@ struct RgbPoint {
 	vec4 rgba;
 };
 
-constexpr int MAX_POINT_COUNT = 5 * 1000 * 1000;
+constexpr int MAX_POINT_COUNT = 10 * 1000 * 1000;
 
 int main() {
 
@@ -238,6 +238,9 @@ int main() {
 			void main() {
 				unsigned int invocationIdx = gl_GlobalInvocationID.y * (gl_WorkGroupSize.x * gl_NumWorkGroups.x) + gl_GlobalInvocationID.x;
 				unsigned int baseIdx;
+
+				if (invocationIdx >= pointBufferMaxElements)
+					return;
 				
 				// We want to process "numberOfPointsToSplat" indices in a way that wraps around the buffer.
 				if (currentWriteOffset >= numberOfPointsToSplat) {
@@ -279,18 +282,29 @@ int main() {
 				float weight = 1.;
 
 				uvec3 icolor = uvec3(weight * 1000 * color.rgb);
-				atomicAdd(colors[3 * pixelIdx + 0], icolor.r);
-				atomicAdd(colors[3 * pixelIdx + 1], icolor.g);
-				atomicAdd(colors[3 * pixelIdx + 2], icolor.b);
-
-				
-
-				atomicAdd(sampleWeights[pixelIdx], int(100 * weight));
+				if (camSpace.y > 0.5) {
+					atomicAdd(colors[3 * pixelIdx + 0], icolor.r);
+					atomicAdd(colors[3 * pixelIdx + 1], icolor.g);
+					atomicAdd(colors[3 * pixelIdx + 2], icolor.b);
+						atomicAdd(sampleWeights[pixelIdx], int(100 * weight));
+				}
+				else {
+					colors[3 * pixelIdx + 0] += icolor.r;
+					colors[3 * pixelIdx + 1] += icolor.g;
+					colors[3 * pixelIdx + 2] += icolor.b;
+					sampleWeights[pixelIdx] += int(100 * weight);
+				}
 			}
 			));
 		}
 
-		int numberOfPointsToSplat = 4 * 1000 * 1000;
+		int numberOfPointsToSplat = MAX_POINT_COUNT;
+
+		//cameras[1].pos.y += 1.0;
+		//cameras[1].dir.y -= 0.1;
+		//cameras[1].dir = normalize(cameras[1].dir);
+		//cameraPath(secs - 2., cameras[1]);
+		glNamedBufferSubData(cameraData, 0, sizeof(cameras), &cameras);
 
 		glUseProgram(pointSplat);
 		bindImage("gbuffer", 0, gbuffer, GL_READ_WRITE, GL_RGBA32F);
