@@ -59,6 +59,7 @@ layout(std140) uniform cameraArray {
 
 layout(std430) buffer pointBufferHeader {
     int currentWriteOffset;
+    int pointsSplatted;
 };
 
 layout(std430) buffer pointBuffer {
@@ -124,11 +125,11 @@ void getCameraProjection(CameraParams cam, vec2 uv, out vec3 outPos, out vec3 ou
 	outDir = normalize(outPos - cam.pos);
 }
 
-vec2 shadowMarch(inout vec3 p, vec3 rd, int num_iters, float maxDist=10.) {
+vec2 shadowMarch(inout vec3 p, vec3 rd, int num_iters, float w, float mint, float maxt) {
     vec3 ro = p;
     int i;
     float omega = 1.3;
-    float t = 0.;
+    float t = mint;
     int mat;
     float last_d = 0.;
     float step = 0.;
@@ -145,15 +146,16 @@ vec2 shadowMarch(inout vec3 p, vec3 rd, int num_iters, float maxDist=10.) {
             step = d * omega;
         }
 
-        closest = min(closest, d);
+        //closest = min(closest, d);
+        closest = min(closest, 0.5+0.5*d/(w*t) );
 
         last_d = d;
 
-        if (d < t * 1e-5) {
+        if (d < 1e-5) {
             break;
         }
 
-        if (t >= maxDist) {
+        if (t >= maxt) {
             break;
         }
 
@@ -161,6 +163,8 @@ vec2 shadowMarch(inout vec3 p, vec3 rd, int num_iters, float maxDist=10.) {
     }
 
     p = ro + t * rd;
+    closest = max(0., closest);
+    //return vec2(t, closest*closest*(3.-2.*closest));
     return vec2(t, closest);
 }
 
@@ -246,6 +250,23 @@ float march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int num_i
 
 }
 
+float sampleAO(vec3 ro, vec3 rd)
+{
+    const int STEPS = 20;
+    const float step = 0.05;
+    float t = step;
+    int mat=0;
+    float obscurance = 0.;
+
+    for (int i=0; i < STEPS; i++) {
+        float d = scene(ro + t * rd, mat);
+        obscurance += max(0., t - d) / t;
+        t += step;
+    }
+
+    return 1. - obscurance / STEPS;
+}
+
 void main() {
     srand(frame, uint(gl_GlobalInvocationID.x), uint(gl_GlobalInvocationID.y));
     jenkins_mix();
@@ -272,7 +293,7 @@ void main() {
 
         int hitmat = MATERIAL_SKY;
         vec2 restart;
-        float zdepth = march(p, dir, hitmat, restart, 300);
+        float zdepth = march(p, dir, hitmat, restart, 400);
         float distance = length(p - cam.pos);
 
         vec3 color;
@@ -288,20 +309,25 @@ void main() {
                 vec3 to_camera = normalize(cam.pos - p);
                 vec3 to_light = normalize(vec3(-0.5, -1.0, 0.7));
 
-                vec3 shadowRayPos = p + to_camera * 1e-3;
+                vec3 shadowRayPos = p + to_camera * 1e-4;
                 const float maxShadowDist = 10.;
-                vec2 shadowResult = shadowMarch(shadowRayPos, to_light, 60, maxShadowDist);
+                vec2 shadowResult = shadowMarch(shadowRayPos, to_light, 400, 9e-2, 0.01, maxShadowDist);
                 float sun = min(shadowResult.x, maxShadowDist) / maxShadowDist;
+                //sun = max(0., shadowResult.y - 0.1);
+                //sun = (sun+0.1) * shadowResult.y;
+
                 //float sun = min(1.0, shadowResult.y*1e3);
                 sun = pow(sun, 2.);
 
-                float shine = max(0., dot(normal, to_light));
+                float ambient = sampleAO(p, normal);
+                ambient = pow(ambient, 2.5);
+
+                float facing = max(0., dot(normal, to_light));
                 vec3 base = vec3(1.);
-                color = base * sun * vec3(shine);
-                //color = base * vec3(shine);
+                //color = base * sun * vec3(facing);
+                color = vec3(sun);
+                color = vec3(facing * sun);
                 color = clamp(color, vec3(0.), vec3(10.));
-                // float fog = pow(min(1., distance / 10.), 4.0);
-                // color = mix(color, vec3(0.5, 0., 0.), fog);
                 break;
         }
 
