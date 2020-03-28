@@ -115,8 +115,9 @@ int main() {
 	{
 		// timestamp objects make gl queries at those locations; you can substract them to get the time
 		TimeStamp start;
-		float secs = frame / 60.f;
-		cameraPath(secs, cameras[1]);
+		float secs = fmod(frame / 60.f, 2.0) + 21.;
+		float futureInterval = 1. / 60.f;
+		cameraPath(secs + futureInterval, cameras[1]);
 		glNamedBufferSubData(cameraData, 0, sizeof(cameras), &cameras);
 
 		glDisable(GL_BLEND);
@@ -235,29 +236,34 @@ int main() {
 				return vec3(plane + vec2(0.5), z);
 			}
 
-			void main() {
-				unsigned int invocationIdx = gl_GlobalInvocationID.y * (gl_WorkGroupSize.x * gl_NumWorkGroups.x) + gl_GlobalInvocationID.x;
+			void main()
+			{
+				unsigned int invocationIdx =
+					(gl_GlobalInvocationID.y * (gl_WorkGroupSize.x * gl_NumWorkGroups.x)
+						+ gl_GlobalInvocationID.x);
 				unsigned int baseIdx;
 
 				if (invocationIdx >= pointBufferMaxElements)
 					return;
-				
+
 				// We want to process "numberOfPointsToSplat" indices in a way that wraps around the buffer.
 				if (currentWriteOffset >= numberOfPointsToSplat) {
 					baseIdx = currentWriteOffset - numberOfPointsToSplat;
-				} else {
+				}
+				else {
 					baseIdx = pointBufferMaxElements - (numberOfPointsToSplat - currentWriteOffset);
 				};
 
 				unsigned int index = (baseIdx + invocationIdx) % pointBufferMaxElements;
 				vec4 pos = points[index].xyzw;
 				vec4 color = points[index].rgba;
+				vec3 c = color.rgb;
 
 				// Raymarcher never produces pure (0, 0, 0) hits.
 				if (pos == vec4(0.))
 					return;
 
-				vec3 camSpace = reprojectPoint(cameras[1], pos.rgb);
+				vec3 camSpace = reprojectPoint(cameras[1], pos.xyz);
 
 				if (any(lessThan(camSpace, vec3(0.))))
 				{
@@ -272,38 +278,29 @@ int main() {
 				int y = int(camSpace.y * screenSize.y);
 
 				int pixelIdx = screenSize.x * y + x;
-				
+
 				float distance = length(pos.xyz - cameras[1].pos);
 				float fog = pow(min(1., distance / 10.), 4.0);
-				color.rgb = mix(color.rgb, vec3(0.5, 0., 0.), fog);
+				c = mix(c, vec3(0.5, 0., 0.), fog);
 
-				color.rgb = clamp(color.rgb, vec3(0.), vec3(10.));
+				c = c / (vec3(1.) + c);
+				c = clamp(c, vec3(0.), vec3(10.));
 
-				float weight = 1.;
+				float weight = max(1.0, min(3e3,
+					1. / (pow(camSpace.z / 2., 2.) + 0.001)));
 
-				uvec3 icolor = uvec3(weight * 1000 * color.rgb);
-				if (camSpace.y > 0.5) {
-					atomicAdd(colors[3 * pixelIdx + 0], icolor.r);
-					atomicAdd(colors[3 * pixelIdx + 1], icolor.g);
-					atomicAdd(colors[3 * pixelIdx + 2], icolor.b);
-						atomicAdd(sampleWeights[pixelIdx], int(100 * weight));
+				uvec3 icolor = uvec3(weight * 1000 * c);
+				atomicAdd(colors[3 * pixelIdx + 0], icolor.r);
+				atomicAdd(colors[3 * pixelIdx + 1], icolor.g);
+				atomicAdd(colors[3 * pixelIdx + 2], icolor.b);
+				atomicAdd(sampleWeights[pixelIdx], int(1000 * weight));
 				}
-				else {
-					colors[3 * pixelIdx + 0] += icolor.r;
-					colors[3 * pixelIdx + 1] += icolor.g;
-					colors[3 * pixelIdx + 2] += icolor.b;
-					sampleWeights[pixelIdx] += int(100 * weight);
-				}
-			}
 			));
 		}
 
 		int numberOfPointsToSplat = MAX_POINT_COUNT;
 
-		//cameras[1].pos.y += 1.0;
-		//cameras[1].dir.y -= 0.1;
-		//cameras[1].dir = normalize(cameras[1].dir);
-		//cameraPath(secs - 2., cameras[1]);
+		cameraPath(secs, cameras[1]);
 		glNamedBufferSubData(cameraData, 0, sizeof(cameras), &cameras);
 
 		glUseProgram(pointSplat);
@@ -317,7 +314,7 @@ int main() {
 		bindBuffer("colorBuffer", colorBuffer);
 		bindBuffer("sampleWeightBuffer", sampleWeightBuffer);
 		bindBuffer("cameraArray", cameraData);
-		glDispatchCompute(numberOfPointsToSplat / 128, 1, 1);
+		glDispatchCompute(numberOfPointsToSplat / 128 / 1, 1, 1);
 
 		glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_SHADER_STORAGE_BARRIER_BIT | GL_ATOMIC_COUNTER_BARRIER_BIT);
 
@@ -461,42 +458,6 @@ int main() {
 						outDir = normalize(outPos - cam.pos);
 					}
 
-					vec2 reprojectPoint(CameraParams cam, vec3 p) {
-						vec3 op = p - cam.pos;
-						float n = length(cam.dir);
-						float z = dot(cam.dir, op) / n;
-						vec3 pp = (op * n) / z;
-						vec2 plane = vec2(
-							dot(pp, cam.right) / dot(cam.right, cam.right),
-							dot(pp, cam.up) / dot(cam.up, cam.up)
-						);
-						return plane + vec2(0.5);
-					}
-
-					float rgb2Luminance(vec3 rgb) {
-						return dot(rgb, vec3(0.2126, 0.7152, 0.0722));
-					}
-
-					// https://software.intel.com/en-us/node/503873
-					vec3 RGB_YCoCg(vec3 c)
-					{
-						return vec3(
-							c.x / 4.0 + c.y / 2.0 + c.z / 4.0,
-							c.x / 2.0 - c.z / 2.0,
-							-c.x / 4.0 + c.y / 2.0 - c.z / 4.0
-						);
-					}
-
-					// https://software.intel.com/en-us/node/503873
-					vec3 YCoCg_RGB(vec3 c)
-					{
-						return clamp(vec3(
-							c.x + c.y - c.z,
-							c.x + c.z,
-							c.x - c.y - c.z
-						), vec3(0.), vec3(1.));
-					}
-
 					layout(std140) uniform cameraArray { CameraParams cameras[2]; };
 					layout(std430) buffer colorBuffer { uint colors[]; };
 					layout(std430) buffer sampleWeightBuffer { uint sampleWeights[]; };
@@ -514,13 +475,11 @@ int main() {
 							colors[3 * pixelIdx + 2]
 						);
 
-						float totalWeight = float(sampleWeights[pixelIdx]) / 100.;
+						float totalWeight = float(sampleWeights[pixelIdx]) / 1000.;
 						vec3 color = vec3(icolor) / 1000.;
 						color /= totalWeight;
 
 						vec3 c = color;
-
-						c = c / (vec3(1.) + c);
 						outColor = vec4(linearToSRGB(c.rgb), 1.);
 
 						// Clear the accumulation buffer
