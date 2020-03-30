@@ -1,6 +1,7 @@
 
 #include "gl_helpers.h"
 #include "shaderprintf.h"
+#include <cassert>
 
 Program createProgram(const std::string_view computePath) {
 	return Program(computePath);
@@ -150,6 +151,47 @@ Texture<GL_TEXTURE_2D> loadImage(const std::wstring& path) {
 		glBindTexture(GL_TEXTURE_2D, result);
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_SRGB8, image.GetWidth(), image.GetHeight(), 0, GL_BGR, GL_UNSIGNED_BYTE, data.Scan0);
 		glGenerateMipmap(GL_TEXTURE_2D);
+
+		((Bitmap*)&image)->UnlockBits(&data);
+	}
+	GdiplusShutdown(token);
+	return result;
+}
+
+Texture<GL_TEXTURE_2D_ARRAY> loadImageArray(const std::wstring* paths, int count) {
+	using namespace Gdiplus;
+	ULONG_PTR token;
+	GdiplusStartup(&token, &GdiplusStartupInput(), nullptr);
+
+	Texture<GL_TEXTURE_2D_ARRAY> result;
+	glBindTexture(GL_TEXTURE_2D_ARRAY, result);
+
+	
+	int width = 0, height = 0;
+
+	for (int i = 0; i < count; i++)
+	{
+		Image image(paths[i].c_str());
+		image.RotateFlip(RotateNoneFlipY);
+		const Rect r(0, 0, image.GetWidth(), image.GetHeight());
+		BitmapData data;
+		((Bitmap*)&image)->LockBits(&r, ImageLockModeRead, PixelFormat24bppRGB, &data);
+
+		if (i == 0) {
+			width = image.GetWidth();
+			height = image.GetHeight();
+			glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGB8, image.GetWidth(), image.GetHeight(), count, 0, GL_BGR, GL_UNSIGNED_BYTE, NULL);
+			glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
+			glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
+			glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_R, GL_REPEAT);
+		}
+
+		assert(image.GetWidth() == width);
+		assert(image.GetHeight() == height);
+
+		glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, count, image.GetWidth(), image.GetHeight(), 1, GL_BGR, GL_UNSIGNED_BYTE, data.Scan0);
 
 		((Bitmap*)&image)->UnlockBits(&data);
 	}
