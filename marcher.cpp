@@ -13,6 +13,26 @@ struct CameraParameters {
 	float padding3;
 };
 
+double getTime()
+{
+	static bool initialized;
+	static LARGE_INTEGER StartingTime;
+	static LARGE_INTEGER Frequency;
+
+	if (!initialized) {
+		QueryPerformanceFrequency(&Frequency);
+		QueryPerformanceCounter(&StartingTime);
+		initialized = true;
+	}
+
+	// Activity to be timed
+
+	LARGE_INTEGER now, ElapsedMicroseconds;
+	QueryPerformanceCounter(&now);
+	ElapsedMicroseconds.QuadPart = now.QuadPart - StartingTime.QuadPart;
+	return (double)ElapsedMicroseconds.QuadPart / 1000000.;
+}
+
 const int screenw = 1024, screenh = 1024;
 static constexpr int SAMPLES_PER_PIXEL = 1;
 static constexpr GLuint SAMPLE_BUFFER_TYPE = GL_RGBA16F;
@@ -20,15 +40,15 @@ static constexpr GLuint JITTER_BUFFER_TYPE = GL_RG8;
 
 static void cameraPath(float t, CameraParameters& cam)
 {
-	float tt = t * 0.2f;
+	float tt = t * 0.1f / 8.;
 	//cam.pos = vec3(0.5f*sin(tt), 0.f, 6.f + 0.5f*cos(tt));
-	cam.pos = vec3(1., 0., 4.f + 2.5f*cos(tt));
-	cam.dir = normalize(vec3(0.5f*cos(tt*0.5f), 0.2f*sin(tt), -1.f));
+	cam.pos = vec3(0. + 2.0 * sin(tt), -4., 7.f + 0.1f*cos(tt));
+	cam.dir = normalize(vec3(0.5f*cos(tt*0.5f), 0.3 + 0.2f*sin(tt), -1.f));
 	cam.right = normalize(cross(cam.dir, vec3(0.f, 1.f, 0.f)));
 	cam.up = cross(cam.dir, cam.right);
 	
 	float nearplane = 0.1f;
-	float zoom = 1.0f;
+	float zoom = 4.0f;
 	cam.dir *= nearplane;
 	cam.right *= nearplane;
 	cam.right /= zoom;
@@ -48,7 +68,7 @@ struct RgbPoint {
 	vec4 rgba;
 };
 
-constexpr int MAX_POINT_COUNT = 10 * 1000 * 1000;
+constexpr int MAX_POINT_COUNT = 1.1 * 1024 * 1024;
 
 int main() {
 
@@ -61,6 +81,75 @@ int main() {
 	// shader variables; could also initialize them here, but it's often a good idea to
 	// do that at the callsite (so input/output declarations are close to the bind code)
 	Program march, draw, sampleResolve, headerUpdate, pointSplat;
+
+	std::wstring noisePaths[] = {
+		L"assets/bluenoise/LDR_RGB1_0.png",
+		L"assets/bluenoise/LDR_RGB1_1.png",
+		L"assets/bluenoise/LDR_RGB1_2.png",
+		L"assets/bluenoise/LDR_RGB1_3.png",
+		L"assets/bluenoise/LDR_RGB1_4.png",
+		L"assets/bluenoise/LDR_RGB1_5.png",
+		L"assets/bluenoise/LDR_RGB1_6.png",
+		L"assets/bluenoise/LDR_RGB1_7.png",
+		L"assets/bluenoise/LDR_RGB1_8.png",
+		L"assets/bluenoise/LDR_RGB1_9.png",
+		L"assets/bluenoise/LDR_RGB1_10.png",
+		L"assets/bluenoise/LDR_RGB1_11.png",
+		L"assets/bluenoise/LDR_RGB1_12.png",
+		L"assets/bluenoise/LDR_RGB1_13.png",
+		L"assets/bluenoise/LDR_RGB1_14.png",
+		L"assets/bluenoise/LDR_RGB1_15.png",
+		L"assets/bluenoise/LDR_RGB1_16.png",
+		L"assets/bluenoise/LDR_RGB1_17.png",
+		L"assets/bluenoise/LDR_RGB1_18.png",
+		L"assets/bluenoise/LDR_RGB1_19.png",
+		L"assets/bluenoise/LDR_RGB1_20.png",
+		L"assets/bluenoise/LDR_RGB1_21.png",
+		L"assets/bluenoise/LDR_RGB1_22.png",
+		L"assets/bluenoise/LDR_RGB1_23.png",
+		L"assets/bluenoise/LDR_RGB1_24.png",
+		L"assets/bluenoise/LDR_RGB1_25.png",
+		L"assets/bluenoise/LDR_RGB1_26.png",
+		L"assets/bluenoise/LDR_RGB1_27.png",
+		L"assets/bluenoise/LDR_RGB1_28.png",
+		L"assets/bluenoise/LDR_RGB1_29.png",
+		L"assets/bluenoise/LDR_RGB1_30.png",
+		L"assets/bluenoise/LDR_RGB1_31.png",
+		L"assets/bluenoise/LDR_RGB1_32.png",
+		L"assets/bluenoise/LDR_RGB1_33.png",
+		L"assets/bluenoise/LDR_RGB1_34.png",
+		L"assets/bluenoise/LDR_RGB1_35.png",
+		L"assets/bluenoise/LDR_RGB1_36.png",
+		L"assets/bluenoise/LDR_RGB1_37.png",
+		L"assets/bluenoise/LDR_RGB1_38.png",
+		L"assets/bluenoise/LDR_RGB1_39.png",
+		L"assets/bluenoise/LDR_RGB1_40.png",
+		L"assets/bluenoise/LDR_RGB1_41.png",
+		L"assets/bluenoise/LDR_RGB1_42.png",
+		L"assets/bluenoise/LDR_RGB1_43.png",
+		L"assets/bluenoise/LDR_RGB1_44.png",
+		L"assets/bluenoise/LDR_RGB1_45.png",
+		L"assets/bluenoise/LDR_RGB1_46.png",
+		L"assets/bluenoise/LDR_RGB1_47.png",
+		L"assets/bluenoise/LDR_RGB1_48.png",
+		L"assets/bluenoise/LDR_RGB1_49.png",
+		L"assets/bluenoise/LDR_RGB1_50.png",
+		L"assets/bluenoise/LDR_RGB1_51.png",
+		L"assets/bluenoise/LDR_RGB1_52.png",
+		L"assets/bluenoise/LDR_RGB1_53.png",
+		L"assets/bluenoise/LDR_RGB1_54.png",
+		L"assets/bluenoise/LDR_RGB1_55.png",
+		L"assets/bluenoise/LDR_RGB1_56.png",
+		L"assets/bluenoise/LDR_RGB1_57.png",
+		L"assets/bluenoise/LDR_RGB1_58.png",
+		L"assets/bluenoise/LDR_RGB1_59.png",
+		L"assets/bluenoise/LDR_RGB1_60.png",
+		L"assets/bluenoise/LDR_RGB1_61.png",
+		L"assets/bluenoise/LDR_RGB1_62.png",
+		L"assets/bluenoise/LDR_RGB1_63.png",
+
+	};
+	Texture<GL_TEXTURE_2D_ARRAY> noiseTextures = loadImageArray(noisePaths, sizeof(noisePaths)/sizeof(std::wstring));
 
 	Texture<GL_TEXTURE_2D_ARRAY> abuffer;
 	Texture<GL_TEXTURE_2D> gbuffer;
@@ -86,9 +175,10 @@ int main() {
 	glTextureStorage3D(jitterbuffer, 1, JITTER_BUFFER_TYPE, renderw, renderh, SAMPLES_PER_PIXEL);
 
 	int abuffer_read_layer = 0, frame = 0;
+	int noiseLayer = -1;
 	CameraParameters cameras[2] = {};
 	glNamedBufferStorage(cameraData, sizeof(cameras), NULL, GL_DYNAMIC_STORAGE_BIT);
-	glNamedBufferStorage(pointBufferHeader, 4, NULL, GL_DYNAMIC_STORAGE_BIT); // TODO read bit only for debugging
+	glNamedBufferStorage(pointBufferHeader, 2 * sizeof(int), NULL, GL_DYNAMIC_STORAGE_BIT); // TODO read bit only for debugging
 	glNamedBufferStorage(pointBuffer, sizeof(RgbPoint) * MAX_POINT_COUNT, NULL, GL_DYNAMIC_STORAGE_BIT); // TODO read bit only for debugging
 	glNamedBufferStorage(colorBuffer, screenw * screenh * 3 * sizeof(int), NULL, 0);
 	glNamedBufferStorage(sampleWeightBuffer, screenw * screenh * sizeof(int), NULL, 0);
@@ -115,10 +205,17 @@ int main() {
 	{
 		// timestamp objects make gl queries at those locations; you can substract them to get the time
 		TimeStamp start;
-		float secs = fmod(frame / 60.f, 2.0) + 21.;
-		float futureInterval = 1. / 60.f;
+		float secs = getTime(); //fmod(frame / 60.f, 2.0) + 21.;
+		float futureInterval = 0. / 60.f;
 		cameraPath(secs + futureInterval, cameras[1]);
 		glNamedBufferSubData(cameraData, 0, sizeof(cameras), &cameras);
+
+		{
+			int layer;
+			while ((layer = rand() % 64) == noiseLayer);
+			noiseLayer = layer;
+			//printf("noiseLayer: %d\n", noiseLayer);
+		}
 
 		glDisable(GL_BLEND);
 
@@ -137,19 +234,12 @@ int main() {
 		bindImage("zbuffer", 0, zbuffer, GL_WRITE_ONLY, GL_R32F);
 		bindImage("samplebuffer", 0, samplebuffer, GL_WRITE_ONLY, SAMPLE_BUFFER_TYPE);
 		bindImage("jitterbuffer", 0, jitterbuffer, GL_WRITE_ONLY, JITTER_BUFFER_TYPE);
-		// the arguments of dispatch are the numbers of thread blocks in each direction;
-		// since our local size is 16x16x1, we'll get 1024x1024x1 threads total, just enough
-		// for our image
-		glDispatchCompute(64, 64, 1);
+		glDispatchCompute((screenw+17)/16, (screenh+17)/16, 1); // round up and add extra context
 
 		// we're writing to an image in a shader, so we should have a barrier to ensure the writes finish
 		// before the next shader call (wasn't an issue on my hardware in this case, but you should always make sure
 		// to place the correct barriers when writing from compute shaders and reading in subsequent shaders)
 		glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_SHADER_STORAGE_BARRIER_BIT | GL_ATOMIC_COUNTER_BARRIER_BIT);
-
-		int currentWriteOffset = -1;
-		glGetNamedBufferSubData(pointBufferHeader, 0, 4, &currentWriteOffset);
-		printf("currentWriteOffset: %d\n", currentWriteOffset);
 
 		TimeStamp drawTime;
 
@@ -158,14 +248,17 @@ int main() {
 				GLSL(460,
 					layout(local_size_x = 16, local_size_y = 16) in;
 
-					layout(std140) buffer pointBufferHeader {
+					layout(std430) buffer pointBufferHeader {
 						int currentWriteOffset;
+						int pointsSplatted;
 					};
 
 					uniform int pointBufferMaxElements;
 
 					void main() {
 						currentWriteOffset = currentWriteOffset % pointBufferMaxElements;
+						pointsSplatted = 0;
+						currentWriteOffset = 0; // DEBUG HACK! remove
 					}
 				)
 			);
@@ -208,6 +301,7 @@ int main() {
 
 			layout(std430) buffer pointBufferHeader {
 				int currentWriteOffset;
+				int pointsSplatted;
 			};
 			
 			layout(std430) buffer pointBuffer {
@@ -264,37 +358,31 @@ int main() {
 					return;
 
 				vec3 camSpace = reprojectPoint(cameras[1], pos.xyz);
+				int x = int(camSpace.x * screenSize.x + 0.5);
+				int y = int(camSpace.y * screenSize.y + 0.5);
 
-				if (any(lessThan(camSpace, vec3(0.))))
-				{
+				if (x < 0 || y < 0 || x >= screenSize.x || y >= screenSize.y)
 					return;
-				}
-
-				if (any(greaterThan(camSpace.xy, vec2(1.)))) {
-					return;
-				}
-
-				int x = int(camSpace.x * screenSize.x);
-				int y = int(camSpace.y * screenSize.y);
 
 				int pixelIdx = screenSize.x * y + x;
 
 				float distance = length(pos.xyz - cameras[1].pos);
-				float fog = pow(min(1., distance / 10.), 4.0);
-				c = mix(c, vec3(0.5, 0., 0.), fog);
+				float fog = pow(min(1., distance / 15.), 1.0);
+				//c = mix(c, vec3(0.1, 0.1, 0.2)*0.1, fog);
 
 				c = c / (vec3(1.) + c);
 				c = clamp(c, vec3(0.), vec3(10.));
 
-				float weight = max(1.0, min(3e3,
-					1. / (pow(camSpace.z / 2., 2.) + 0.001)));
+				float weight = max(0.1, min(1e3,
+					1. / (pow(camSpace.z / 3., 2.) + 0.001)));
 
-				uvec3 icolor = uvec3(weight * 1000 * c);
+				uvec3 icolor = uvec3(weight * 8000 * c);
 				atomicAdd(colors[3 * pixelIdx + 0], icolor.r);
 				atomicAdd(colors[3 * pixelIdx + 1], icolor.g);
 				atomicAdd(colors[3 * pixelIdx + 2], icolor.b);
-				atomicAdd(sampleWeights[pixelIdx], int(1000 * weight));
-				}
+				atomicAdd(sampleWeights[pixelIdx], int(1000 * weight));	
+				atomicAdd(pointsSplatted, 1);
+			}
 			));
 		}
 
@@ -319,6 +407,11 @@ int main() {
 		glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_SHADER_STORAGE_BARRIER_BIT | GL_ATOMIC_COUNTER_BARRIER_BIT);
 
 		TimeStamp splatTime;
+
+		int data[2];
+		glGetNamedBufferSubData(pointBufferHeader, 0, 8, data);
+		printf("currentWriteOffset: %d\n", data[0]);
+		printf("pointsSplatted: %d\t(%.3f million)\n", data[1], data[1]/1000000.);
 
 		if (false) {
 			if (!sampleResolve) {
@@ -465,6 +558,8 @@ int main() {
 					out vec4 outColor;
 					uniform ivec2 screenSize;
 					uniform int frame;
+					uniform ivec3 noiseOffset;
+					uniform sampler2DArray noiseTextures;
 
 					void main() {
 						int pixelIdx = screenSize.x * int(gl_FragCoord.y) + int(gl_FragCoord.x);
@@ -476,11 +571,19 @@ int main() {
 						);
 
 						float totalWeight = float(sampleWeights[pixelIdx]) / 1000.;
-						vec3 color = vec3(icolor) / 1000.;
+						vec3 color = vec3(icolor) / 10000.0;
 						color /= totalWeight;
 
 						vec3 c = color;
 						outColor = vec4(linearToSRGB(c.rgb), 1.);
+
+						vec3 noise = texelFetch(noiseTextures,
+							ivec3(
+								(int(gl_FragCoord.x) + noiseOffset.x) % 64,
+								(int(gl_FragCoord.y) + noiseOffset.y) % 64,
+								noiseOffset.z),
+							0).rgb;
+						//outColor = vec4(noise, 1.);
 
 						// Clear the accumulation buffer
 						colors[3 * pixelIdx + 0] = 0;
@@ -494,8 +597,10 @@ int main() {
 		glUseProgram(draw);
 
 		glUniform1i("frame", frame);
+		glUniform3i("noiseOffset", rand() % 64, rand() % 64, noiseLayer);
 		glUniform1f("secs", secs);
 		glUniform2i("screenSize", screenw, screenh);
+		bindTexture("noiseTextures", noiseTextures);
 		bindBuffer("colorBuffer", colorBuffer);
 		bindBuffer("sampleWeightBuffer", sampleWeightBuffer);
 		bindBuffer("cameraArray", cameraData);

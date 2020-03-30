@@ -107,7 +107,7 @@ float mandelbox(vec3 position, int iters=7) {
 
 float scene(vec3 p, out int material, float pixelConeSize=1.) {
 	material = MATERIAL_OTHER;
-	return mandelbox(p, 8);
+	return mandelbox(p, 9);
 }
 
 vec3 evalnormal(vec3 p) {
@@ -169,7 +169,7 @@ vec2 shadowMarch(inout vec3 p, vec3 rd, int num_iters, float w, float mint, floa
 }
 
 // Raymarching loop based on techniques of Keinert et al. "Enhanced Sphere Tracing", 2014.
-float march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int num_iters, float maxDist=20.) {
+float march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int num_iters, out int out_iters, float maxDist=20.) {
     vec3 ro = p;
     int i;
     float omega = 1.3;
@@ -219,6 +219,7 @@ float march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int num_i
     }
 
     restart = vec2(0, PIXEL_RADIUS);
+    out_iters = i;
 
     if (t >= maxDist) {
         material = MATERIAL_SKY;
@@ -282,10 +283,20 @@ void main() {
         int myPointOffset = atomicAdd(currentWriteOffset, 1);
         myPointOffset %= pointBufferMaxElements;
 
-        vec2 jitter = vec2(rand(), rand());
+        vec2 jitter = vec2(rand() - 0.5, rand() - 0.5);
+        jitter *= 0.95;
 
         vec2 uv = getThreadUV(gl_GlobalInvocationID);
-        uv += (jitter - vec2(0.5, 0.5)) / imageSize(zbuffer).xy;
+        uv += jitter / imageSize(zbuffer).xy;
+
+        if (any(greaterThan(uv, vec2(1.0)))) {
+            continue;
+        }
+
+        // Allow sampling half a pixel outside the screen
+        if (any(lessThan(uv, vec2(-0.5/res.x, -0.5/res.y)))) {
+            continue;
+        }
 
         CameraParams cam = cameras[1];
         vec3 p, dir;
@@ -293,7 +304,8 @@ void main() {
 
         int hitmat = MATERIAL_SKY;
         vec2 restart;
-        float zdepth = march(p, dir, hitmat, restart, 400);
+        int iters=0;
+        float zdepth = march(p, dir, hitmat, restart, 400, iters);
         float distance = length(p - cam.pos);
 
         vec3 color;
@@ -320,14 +332,19 @@ void main() {
                 sun = pow(sun, 2.);
 
                 float ambient = sampleAO(p, normal);
-                ambient = pow(ambient, 2.5);
+                ambient = pow(ambient, 2.0);
 
                 float facing = max(0., dot(normal, to_light));
                 vec3 base = vec3(1.);
                 //color = base * sun * vec3(facing);
                 color = vec3(sun);
-                color = vec3(facing * sun);
+                vec3 skycolor = vec3(0.5, 0.7, 1.0);
+                vec3 suncolor = vec3(1., 0.8, 0.5);
+                color = ambient * skycolor + facing * sun * suncolor;
                 color = clamp(color, vec3(0.), vec3(10.));
+                color = vec3(0.5)+.5*cos(
+                    10*vec3(iters)/600.
+                + vec3(0., 0.5, 1.));
                 break;
         }
 
