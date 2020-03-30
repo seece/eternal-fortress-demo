@@ -68,7 +68,7 @@ struct RgbPoint {
 	vec4 rgba;
 };
 
-constexpr int MAX_POINT_COUNT = 1.1 * 1024 * 1024;
+constexpr int MAX_POINT_COUNT = 10.1 * 1024 * 1024;
 
 int main() {
 
@@ -206,7 +206,7 @@ int main() {
 		// timestamp objects make gl queries at those locations; you can substract them to get the time
 		TimeStamp start;
 		float secs = getTime(); //fmod(frame / 60.f, 2.0) + 21.;
-		float futureInterval = 0. / 60.f;
+		float futureInterval = 2. / 60.f;
 		cameraPath(secs + futureInterval, cameras[1]);
 		glNamedBufferSubData(cameraData, 0, sizeof(cameras), &cameras);
 
@@ -230,6 +230,8 @@ int main() {
 		bindBuffer("cameraArray", cameraData);
 		bindBuffer("pointBufferHeader", pointBufferHeader);
 		bindBuffer("pointBuffer", pointBuffer);
+		glUniform3i("noiseOffset", rand() % 64, rand() % 64, noiseLayer);
+		bindTexture("noiseTextures", noiseTextures);
 		//bindImage("gbuffer", 0, gbuffer, GL_WRITE_ONLY, GL_RGBA32F);
 		bindImage("zbuffer", 0, zbuffer, GL_WRITE_ONLY, GL_R32F);
 		bindImage("samplebuffer", 0, samplebuffer, GL_WRITE_ONLY, SAMPLE_BUFFER_TYPE);
@@ -258,7 +260,7 @@ int main() {
 					void main() {
 						currentWriteOffset = currentWriteOffset % pointBufferMaxElements;
 						pointsSplatted = 0;
-						currentWriteOffset = 0; // DEBUG HACK! remove
+						//currentWriteOffset = 0; // DEBUG HACK! remove
 					}
 				)
 			);
@@ -294,6 +296,14 @@ int main() {
 			uniform int pointBufferMaxElements;
 			uniform int numberOfPointsToSplat;
 			uniform ivec2 screenSize;
+			uniform ivec3 noiseOffset;
+			uniform sampler2DArray noiseTextures;
+
+			vec3 getNoise(ivec2 coord)
+			{
+				return texelFetch(noiseTextures,
+					ivec3((coord.x + noiseOffset.x) % 64, (coord.y + noiseOffset.y) % 64, noiseOffset.z),0).rgb;
+			}
 
 			layout(std140) uniform cameraArray {
 				CameraParams cameras[2];
@@ -401,6 +411,8 @@ int main() {
 		bindBuffer("pointBuffer", pointBuffer);
 		bindBuffer("colorBuffer", colorBuffer);
 		bindBuffer("sampleWeightBuffer", sampleWeightBuffer);
+		glUniform3i("noiseOffset", rand() % 64, rand() % 64, noiseLayer);
+		bindTexture("noiseTextures", noiseTextures);
 		bindBuffer("cameraArray", cameraData);
 		glDispatchCompute(numberOfPointsToSplat / 128 / 1, 1, 1);
 
@@ -536,6 +548,16 @@ int main() {
 						float padding3;
 					};
 
+					layout(std140) uniform cameraArray { CameraParams cameras[2]; };
+					layout(std430) buffer colorBuffer { uint colors[]; };
+					layout(std430) buffer sampleWeightBuffer { uint sampleWeights[]; };
+
+					out vec4 outColor;
+					uniform ivec2 screenSize;
+					uniform int frame;
+					uniform ivec3 noiseOffset;
+					uniform sampler2DArray noiseTextures;
+
 					// https://gamedev.stackexchange.com/a/148088
 					vec3 linearToSRGB(vec3 linearRGB)
 					{
@@ -551,15 +573,11 @@ int main() {
 						outDir = normalize(outPos - cam.pos);
 					}
 
-					layout(std140) uniform cameraArray { CameraParams cameras[2]; };
-					layout(std430) buffer colorBuffer { uint colors[]; };
-					layout(std430) buffer sampleWeightBuffer { uint sampleWeights[]; };
-
-					out vec4 outColor;
-					uniform ivec2 screenSize;
-					uniform int frame;
-					uniform ivec3 noiseOffset;
-					uniform sampler2DArray noiseTextures;
+					vec3 getNoise(ivec2 coord)
+					{
+						return texelFetch(noiseTextures,
+							ivec3((coord.x + noiseOffset.x) % 64, (coord.y + noiseOffset.y) % 64, noiseOffset.z), 0).rgb;
+					}
 
 					void main() {
 						int pixelIdx = screenSize.x * int(gl_FragCoord.y) + int(gl_FragCoord.x);
@@ -577,12 +595,7 @@ int main() {
 						vec3 c = color;
 						outColor = vec4(linearToSRGB(c.rgb), 1.);
 
-						vec3 noise = texelFetch(noiseTextures,
-							ivec3(
-								(int(gl_FragCoord.x) + noiseOffset.x) % 64,
-								(int(gl_FragCoord.y) + noiseOffset.y) % 64,
-								noiseOffset.z),
-							0).rgb;
+						vec3 noise = getNoise(ivec2(gl_FragCoord.xy));
 						//outColor = vec4(noise, 1.);
 
 						// Clear the accumulation buffer
