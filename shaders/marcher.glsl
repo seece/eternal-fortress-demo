@@ -23,7 +23,7 @@ float rand()
 	return float((rndseed.xyz = rndseed.yzx).x) / pow(2., 32.);
 }
 
-const int MATERIAL_SKY = 0;
+const int MATERIAL_SKY = -1;
 const int MATERIAL_OTHER = 1;
 
 // uniform variables are global from the glsl perspective; you set them in the CPU side and every thread gets the same value
@@ -34,6 +34,14 @@ uniform float secs;
 layout(r32f) uniform image2D zbuffer;
 layout(rgba16f) uniform image2DArray samplebuffer;
 layout(rg8) uniform image2DArray jitterbuffer;
+uniform ivec3 noiseOffset;
+uniform sampler2DArray noiseTextures;
+
+vec3 getNoise(ivec2 coord)
+{
+    return texelFetch(noiseTextures,
+            ivec3((coord.x + noiseOffset.x) % 64, (coord.y + noiseOffset.y) % 64, noiseOffset.z),0).rgb;
+}
 
 struct CameraParams {
     vec3 pos;
@@ -89,6 +97,23 @@ const float MR2 = 0.01;
 vec4 mbox_scalevec = vec4(SCALE, SCALE, SCALE, abs(SCALE)) / MR2;
 float mbox_C1 = abs(SCALE-1.0);
 
+int mandelbox_material(vec3 position, int iters=7) {
+    float mbox_C2 = pow(abs(SCALE), float(1-iters));
+	// distance estimate
+	vec4 p = vec4(position.xyz, 1.0), p0 = vec4(position.xyz, 1.0);  // p.w is knighty's DEfactor
+	for (int i=0; i<iters; i++) {
+		p.xyz = clamp(p.xyz, -1.0, 1.0) * 2.0 - p.xyz;  // box fold: min3, max3, mad3
+		float r2 = dot(p.xyz, p.xyz);  // dp3
+        if (r2 > 5.) {
+            return i;
+        }
+		p.xyzw *= clamp(max(MR2/r2, MR2), 0.0, 1.0);  // sphere fold: div1, max1.sat, mul4
+		p.xyzw = p*mbox_scalevec + p0;  // mad4
+	}
+	float d = (length(p.xyz) - mbox_C1) / p.w - mbox_C2;
+    return 0;
+}
+
 float mandelbox(vec3 position, int iters=7) {
     float mbox_C2 = pow(abs(SCALE), float(1-iters));
 	// distance estimate
@@ -100,8 +125,6 @@ float mandelbox(vec3 position, int iters=7) {
 		p.xyzw = p*mbox_scalevec + p0;  // mad4
 	}
 	float d = (length(p.xyz) - mbox_C1) / p.w - mbox_C2;
-    if (iters == 5) d += 1.0e-2; // hacky inflation fix
-    if (iters == 6) d += 2e-3;
     return d;
 }
 
@@ -211,7 +234,8 @@ float march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int num_i
         }
 
         if (!sorFail && error < 4.*PIXEL_RADIUS || t >= maxDist) {
-            material = mat;
+            material = mandelbox_material(ro + t * rd);
+            //material = mat;
             break;
         }
 
@@ -283,7 +307,9 @@ void main() {
         int myPointOffset = atomicAdd(currentWriteOffset, 1);
         myPointOffset %= pointBufferMaxElements;
 
-        vec2 jitter = vec2(rand() - 0.5, rand() - 0.5);
+        vec2 jitter;
+
+        jitter = vec2(rand() - 0.5, rand() - 0.5);
         jitter *= 0.95;
 
         vec2 uv = getThreadUV(gl_GlobalInvocationID);
@@ -311,41 +337,38 @@ void main() {
         vec3 color;
         vec3 skyColor = vec3(0., 0.2*abs(dir.y), 0.5 - dir.y);
 
-        switch (hitmat) {
-            case MATERIAL_SKY:
-                color = skyColor;
-                break;
-            case MATERIAL_OTHER:
+        if (hitmat == MATERIAL_SKY) {
+            color = skyColor;
+        } else {
+            vec3 normal = evalnormal(p);
+            vec3 to_camera = normalize(cam.pos - p);
+            vec3 to_light = normalize(vec3(-0.5, -1.0, 0.7));
 
-                vec3 normal = evalnormal(p);
-                vec3 to_camera = normalize(cam.pos - p);
-                vec3 to_light = normalize(vec3(-0.5, -1.0, 0.7));
+            vec3 shadowRayPos = p + to_camera * 1e-4;
+            const float maxShadowDist = 10.;
+            vec2 shadowResult = shadowMarch(shadowRayPos, to_light, 400, 9e-2, 0.01, maxShadowDist);
+            float sun = min(shadowResult.x, maxShadowDist) / maxShadowDist;
+            //sun = max(0., shadowResult.y - 0.1);
+            //sun = (sun+0.1) * shadowResult.y;
 
-                vec3 shadowRayPos = p + to_camera * 1e-4;
-                const float maxShadowDist = 10.;
-                vec2 shadowResult = shadowMarch(shadowRayPos, to_light, 400, 9e-2, 0.01, maxShadowDist);
-                float sun = min(shadowResult.x, maxShadowDist) / maxShadowDist;
-                //sun = max(0., shadowResult.y - 0.1);
-                //sun = (sun+0.1) * shadowResult.y;
+            //float sun = min(1.0, shadowResult.y*1e3);
+            sun = pow(sun, 2.);
 
-                //float sun = min(1.0, shadowResult.y*1e3);
-                sun = pow(sun, 2.);
+            float ambient = sampleAO(p, normal);
+            ambient = pow(ambient, 2.0);
 
-                float ambient = sampleAO(p, normal);
-                ambient = pow(ambient, 2.0);
+            float facing = max(0., dot(normal, to_light));
 
-                float facing = max(0., dot(normal, to_light));
-                vec3 base = vec3(1.);
-                //color = base * sun * vec3(facing);
-                color = vec3(sun);
-                vec3 skycolor = vec3(0.5, 0.7, 1.0);
-                vec3 suncolor = vec3(1., 0.8, 0.5);
-                color = ambient * skycolor + facing * sun * suncolor;
-                color = clamp(color, vec3(0.), vec3(10.));
-                color = vec3(0.5)+.5*cos(
-                    10*vec3(iters)/600.
-                + vec3(0., 0.5, 1.));
-                break;
+            vec3 base = vec3(.5) + .5*vec3(sin(hitmat + vec3(0., .5, 1.)));
+
+
+            //color = base * sun * vec3(facing);
+            color = vec3(sun);
+            vec3 skycolor = vec3(0.5, 0.7, 1.0);
+            vec3 suncolor = vec3(1., 0.8, 0.5);
+            color = base * (ambient * skycolor + facing * sun * suncolor);
+            color = clamp(color, vec3(0.), vec3(10.));
+            //color = vec3(0.5)+.5*cos( 10*vec3(iters)/600.  + vec3(0., 0.5, 1.));
         }
 
         if (hitmat != MATERIAL_SKY) {
