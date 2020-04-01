@@ -206,7 +206,7 @@ int main() {
 		// timestamp objects make gl queries at those locations; you can substract them to get the time
 		TimeStamp start;
 		float secs = getTime(); //fmod(frame / 60.f, 2.0) + 21.;
-		secs = 1.;
+		//secs = 1.;
 		float futureInterval = 2. / 60.f;
 		cameraPath(secs + futureInterval, cameras[1]);
 		glNamedBufferSubData(cameraData, 0, sizeof(cameras), &cameras);
@@ -398,7 +398,7 @@ int main() {
 				if (false) {
 					uvec3 icolor = uvec3(weight * 8000 * c);
 					addRGB(pixelIdx, icolor);
-					atomicAdd(sampleWeights[pixelIdx], int(1000 * weight));
+					atomicAdd(sampleWeights[pixelIdx], (uint(1000 * weight) << 16) | (255));
 				} else {
 					vec2 w = fract(screenSpace);
 					vec4 ws = vec4(
@@ -410,16 +410,17 @@ int main() {
 
 					int idx = screenSize.x * int(screenSpace.y) + int(screenSpace.x);
 
+					// FIXME: don't write over image boundaries
 					vec3 col = weight * c;
 					addRGB(idx,					uvec3(8000 * ws[0] * col));
 					addRGB(idx + 1,				uvec3(8000 * ws[1] * col));
 					addRGB(idx + screenSize.x,		uvec3(8000 * ws[2] * col));
 					addRGB(idx + screenSize.x + 1, uvec3(8000 * ws[3] * col));
 
-					atomicAdd(sampleWeights[idx],						int(1000 * weight * ws[0]));
-					atomicAdd(sampleWeights[idx + 1],					int(1000 * weight * ws[1]));
-					atomicAdd(sampleWeights[idx + screenSize.x],		int(1000 * weight * ws[2]));
-					atomicAdd(sampleWeights[idx + screenSize.x + 1],	int(1000 * weight * ws[3]));
+					atomicAdd(sampleWeights[idx],						(uint(1000 * weight * ws[0]) << 16) | uint(255 * ws[0]));
+					atomicAdd(sampleWeights[idx + 1],					(uint(1000 * weight * ws[1]) << 16) | uint(255 * ws[1]));
+					atomicAdd(sampleWeights[idx + screenSize.x],		(uint(1000 * weight * ws[2]) << 16) | uint(255 * ws[2]));
+					atomicAdd(sampleWeights[idx + screenSize.x + 1],	(uint(1000 * weight * ws[3]) << 16) | uint(255 * ws[3]));
 
 					//col += w.x * (1. - w.y) * texelFetch(abuffer, ivec3(uv2pix + vec2(1., 0), abuffer_read_layer), 0);
 					//col += (1. - w.x) * w.y * texelFetch(abuffer, ivec3(uv2pix + vec2(0., 1.), abuffer_read_layer), 0);
@@ -623,18 +624,26 @@ int main() {
 							colors[3 * pixelIdx + 2]
 						);
 
-						float totalWeight = float(sampleWeights[pixelIdx]) / 1000.;
+						uint weightAlphaPacked = sampleWeights[pixelIdx];
+						uint fixedWeight = weightAlphaPacked >> 16;
+						uint fixedAlpha = weightAlphaPacked & 0xffff;
+						float weight = float(fixedWeight) / 1000.;
+						float alpha = float(fixedAlpha) / 255.;
+						alpha = pow(min(1., alpha/1.), 1.);
 						vec3 color = vec3(icolor) / 10000.0;
-						color /= totalWeight;
-
-						vec3 c = color;
+						if (weight > 0.) {
+							color /= weight;
+						}
+						
+						vec3 skyColor = vec3(0., 0.5, 1.);
+						vec3 c = mix(skyColor, color, alpha);
 						outColor = vec4(linearToSRGB(c.rgb), 1.);
+						//outColor= vec4(vec3(alpha == 0.), 1.);
 
 						vec3 noise = getNoise(ivec2(gl_FragCoord.xy));
 						//outColor = vec4(noise, 1.);
 
 						// Clear the accumulation buffer
-						uvec3 skyColor = uvec3(1000 * vec3(0., 0.5, 1.));
 						colors[3 * pixelIdx + 0] = 0;
 						colors[3 * pixelIdx + 1] = 0;
 						colors[3 * pixelIdx + 2] = 0;
