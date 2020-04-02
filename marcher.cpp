@@ -80,7 +80,7 @@ int main() {
 
 	// shader variables; could also initialize them here, but it's often a good idea to
 	// do that at the callsite (so input/output declarations are close to the bind code)
-	Program march, draw, sampleResolve, headerUpdate, pointSplat;
+	Program march, edgeDetect, draw, sampleResolve, headerUpdate, pointSplat;
 
 	std::wstring noisePaths[] = {
 		L"assets/bluenoise/LDR_RGB1_0.png",
@@ -154,12 +154,16 @@ int main() {
 	Texture<GL_TEXTURE_2D_ARRAY> abuffer;
 	Texture<GL_TEXTURE_2D> gbuffer;
 	Texture<GL_TEXTURE_2D> zbuffer;
+	Texture<GL_TEXTURE_2D> edgebuffer;
 	Texture<GL_TEXTURE_2D_ARRAY> samplebuffer;
 	Texture<GL_TEXTURE_2D_ARRAY> jitterbuffer;
 	Buffer cameraData;
 	Buffer pointBufferHeader;
 	Buffer pointBuffer;
 	Buffer colorBuffer, sampleWeightBuffer;
+
+	//Framebuffer fbo;
+	//glBindFramebuffer(GL_FRAMEBUFFER, fbo);
 
 	setWrapToClamp(abuffer);
 	setWrapToClamp(gbuffer);
@@ -170,6 +174,7 @@ int main() {
 
 	glTextureStorage3D(abuffer, 1, GL_RGBA32F, screenw, screenh, 2);
 	glTextureStorage2D(gbuffer, 1, GL_RGBA32F, renderw, renderh);
+	glTextureStorage2D(edgebuffer, 1, GL_R8, renderw, renderh);
 	glTextureStorage2D(zbuffer, 1, GL_R32F, renderw, renderh);
 	glTextureStorage3D(samplebuffer, 1, SAMPLE_BUFFER_TYPE, renderw, renderh, SAMPLES_PER_PIXEL);
 	glTextureStorage3D(jitterbuffer, 1, JITTER_BUFFER_TYPE, renderw, renderh, SAMPLES_PER_PIXEL);
@@ -235,6 +240,7 @@ int main() {
 		bindTexture("noiseTextures", noiseTextures);
 		//bindImage("gbuffer", 0, gbuffer, GL_WRITE_ONLY, GL_RGBA32F);
 		bindImage("zbuffer", 0, zbuffer, GL_WRITE_ONLY, GL_R32F);
+		bindImage("edgebuffer", 0, edgebuffer, GL_WRITE_ONLY, GL_R8);
 		bindImage("samplebuffer", 0, samplebuffer, GL_WRITE_ONLY, SAMPLE_BUFFER_TYPE);
 		bindImage("jitterbuffer", 0, jitterbuffer, GL_WRITE_ONLY, JITTER_BUFFER_TYPE);
 		glDispatchCompute((screenw+17)/16, (screenh+17)/16, 1); // round up and add extra context
@@ -294,6 +300,7 @@ int main() {
 				vec4 rgba;
 			};
 
+			layout(r8) uniform image2D edgebuffer;
 			uniform int pointBufferMaxElements;
 			uniform int numberOfPointsToSplat;
 			uniform ivec2 screenSize;
@@ -383,7 +390,7 @@ int main() {
 					return;
 
 				int pixelIdx = screenSize.x * y + x;
-
+				bool isEdge = imageLoad(edgebuffer, ivec2(x, y)).x > 0;
 				float distance = length(pos.xyz - cameras[1].pos);
 				float fog = pow(min(1., distance / 15.), 1.0);
 				c = mix(c, vec3(0.1, 0.1, 0.2)*0.1, fog);
@@ -391,11 +398,9 @@ int main() {
 				c = c / (vec3(1.) + c);
 				c = clamp(c, vec3(0.), vec3(10.));
 
-				float weight = max(0.1, min(1e3,
-					1. / (pow(camSpace.z / 3., 2.) + 0.001)));
+				float weight = max(0.1, min(1e3, 1. / (pow(camSpace.z / 3., 2.) + 0.001)));
 
-
-				if (false) {
+				if (!isEdge) {
 					uvec3 icolor = uvec3(weight * 8000 * c);
 					addRGB(pixelIdx, icolor);
 					atomicAdd(sampleWeights[pixelIdx], (uint(1000 * weight) << 16) | (255));
@@ -445,6 +450,7 @@ int main() {
 		glUniform2i("screenSize", screenw, screenh);
 		bindBuffer("pointBufferHeader", pointBufferHeader);
 		bindBuffer("pointBuffer", pointBuffer);
+		bindImage("edgebuffer", 0, edgebuffer, GL_READ_ONLY, GL_R8);
 		bindBuffer("colorBuffer", colorBuffer);
 		bindBuffer("sampleWeightBuffer", sampleWeightBuffer);
 		glUniform3i("noiseOffset", rand() % 64, rand() % 64, noiseLayer);
@@ -460,99 +466,6 @@ int main() {
 		glGetNamedBufferSubData(pointBufferHeader, 0, 8, data);
 		printf("currentWriteOffset: %d\n", data[0]);
 		printf("pointsSplatted: %d\t(%.3f million)\n", data[1], data[1]/1000000.);
-
-		if (false) {
-			if (!sampleResolve) {
-				sampleResolve = createProgram(
-					GLSL(460,
-						layout(local_size_x = 16, local_size_y = 16) in;
-
-				uniform sampler2DArray samplebuffer;
-				uniform sampler2DArray jitterbuffer;
-				uniform sampler2D zbuffer;
-				layout(rgba32f) uniform image2D gbuffer;
-
-				void main() {
-					ivec2 ij = ivec2(gl_GlobalInvocationID.xy);
-					int samplesPerPixel = textureSize(samplebuffer, 0).z;
-					vec3 accum = vec3(0.);
-					float totalWeight = 1e-6;
-
-					float centerz = texelFetch(zbuffer, ij, 0).x;
-
-#ifdef USE_PROPER_FILTER
-
-					float aroundzMax = 0.;
-					float aroundzMin = 1e9;
-					vec3 around = vec3(0.);
-					for (int i = 0; i < samplesPerPixel; i++) {
-						for (int y = -1; y <= 1; y++) {
-							for (int x = -1; x <= 1; x++) {
-								ivec2 delta = ivec2(x, y);
-								ivec2 coord = ij + delta;
-
-								vec4 c = texelFetch(samplebuffer, ivec3(coord, i), 0);
-								float z = texelFetch(zbuffer, coord, 0).x;
-
-								// Tonemap colors already here
-								c.rgb = c.rgb / (vec3(1.) + c.rgb);
-
-								vec2 jitter = texelFetch(jitterbuffer, ivec3(coord, i), 0).xy;
-								jitter -= vec2(0.5);
-
-								if (x == 0 && y == 0) {
-									centerz = z;
-								}
-								else {
-									aroundzMax = max(aroundzMax, z);
-									aroundzMin = min(aroundzMin, z);
-									around += c.rgb;
-								}
-
-								vec2 sampleCoord = vec2(x, y) + jitter;
-								float d = length(sampleCoord);
-								float weight = max(0., 1.25 - length(d));
-								//weight = 1.0;
-								//weight = exp(-2.29 * pow(length(sampleCoord), 2.)); // PRMan Gaussian fit to Blackman-Harris 3.
-								accum += weight * c.rgb;
-								totalWeight += weight;
-							}
-						}
-					}
-#else 
-					for (int i = 0; i < samplesPerPixel; i++) {
-						vec4 c = texelFetch(samplebuffer, ivec3(ij, i), 0);
-						float z = texelFetch(zbuffer, ij, 0).x;
-						accum += c.rgb;
-						centerz = min(centerz, z);
-					}
-					totalWeight = samplesPerPixel;
-#endif
-
-					accum /= totalWeight;
-
-					float outz = centerz;
-
-					/*if (centerz > aroundzMax) {
-						accum = around / 8.;
-						outz = aroundzMin;
-					}*/
-
-					imageStore(gbuffer, ij, vec4(accum, outz));
-				}
-				)
-				);
-			}
-
-			glUseProgram(sampleResolve);
-			bindImage("gbuffer", 0, gbuffer, GL_WRITE_ONLY, GL_RGBA32F);
-			bindTexture("zbuffer", zbuffer);
-			bindTexture("samplebuffer", samplebuffer);
-			bindTexture("jitterbuffer", jitterbuffer);
-			glDispatchCompute(64, 64, 1);
-
-			glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-		}
 
 		TimeStamp resolveTime;
 
@@ -587,6 +500,7 @@ int main() {
 					layout(std140) uniform cameraArray { CameraParams cameras[2]; };
 					layout(std430) buffer colorBuffer { uint colors[]; };
 					layout(std430) buffer sampleWeightBuffer { uint sampleWeights[]; };
+					layout(r8) uniform image2D edgebuffer;
 
 					out vec4 outColor;
 					uniform ivec2 screenSize;
@@ -624,12 +538,16 @@ int main() {
 							colors[3 * pixelIdx + 2]
 						);
 
+						float edgeFactor = imageLoad(edgebuffer, ivec2(gl_FragCoord.xy)).x;
+
 						uint weightAlphaPacked = sampleWeights[pixelIdx];
 						uint fixedWeight = weightAlphaPacked >> 16;
 						uint fixedAlpha = weightAlphaPacked & 0xffff;
 						float weight = float(fixedWeight) / 1000.;
 						float alpha = float(fixedAlpha) / 255.;
-						alpha = pow(min(1., alpha/1.), 1.);
+
+						alpha = pow(min(1., alpha/1.), 0.1);
+						if (edgeFactor == 0.) alpha = 1.;
 						vec3 color = vec3(icolor) / 10000.0;
 						if (weight > 0.) {
 							color /= weight;
@@ -637,6 +555,7 @@ int main() {
 						
 						vec3 skyColor = vec3(0., 0.5, 1.);
 						vec3 c = mix(skyColor, color, alpha);
+
 						outColor = vec4(linearToSRGB(c.rgb), 1.);
 						//outColor= vec4(vec3(alpha == 0.), 1.);
 
@@ -648,6 +567,8 @@ int main() {
 						colors[3 * pixelIdx + 1] = 0;
 						colors[3 * pixelIdx + 2] = 0;
 						sampleWeights[pixelIdx] = 0;
+						// Clear the edge buffer
+						imageStore(edgebuffer, ivec2(gl_FragCoord.xy), vec4(0.));
 					}
 				)
 			);
@@ -660,6 +581,7 @@ int main() {
 		glUniform2i("screenSize", screenw, screenh);
 		bindTexture("noiseTextures", noiseTextures);
 		bindBuffer("colorBuffer", colorBuffer);
+		bindImage("edgebuffer", 0, edgebuffer, GL_READ_WRITE, GL_R8); // TODO should be just GL_WRITE
 		bindBuffer("sampleWeightBuffer", sampleWeightBuffer);
 		bindBuffer("cameraArray", cameraData);
 		glDrawArrays(GL_TRIANGLES, 0, 3);

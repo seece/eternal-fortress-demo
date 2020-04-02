@@ -32,6 +32,7 @@ uniform int frame;
 uniform float secs;
 
 layout(r32f) uniform image2D zbuffer;
+layout(r8) uniform image2D edgebuffer;
 layout(rgba16f) uniform image2DArray samplebuffer;
 layout(rg8) uniform image2DArray jitterbuffer;
 uniform ivec3 noiseOffset;
@@ -332,6 +333,7 @@ void main() {
         vec2 restart;
         int iters=0;
         float zdepth = march(p, dir, hitmat, restart, 400, iters);
+        minDepth = min(minDepth, zdepth);
         float distance = length(p - cam.pos);
 
         vec3 color;
@@ -378,5 +380,13 @@ void main() {
     }
 
     imageStore(zbuffer, ivec2(gl_GlobalInvocationID.xy), vec4(minDepth));
+    if (minDepth >= 1e9) {
+        ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+        for (int y=-1;y<=1;y++) {
+            for (int x=-1;x<=1;x++) {
+                imageStore(edgebuffer, coord + ivec2(x, y), vec4(1.));
+            }
+        }
+    }
 }
 
