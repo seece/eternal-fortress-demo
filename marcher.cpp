@@ -34,7 +34,6 @@ double getTime()
 }
 
 const int screenw = 1024, screenh = 1024;
-static constexpr int SAMPLES_PER_PIXEL = 1;
 static constexpr GLuint SAMPLE_BUFFER_TYPE = GL_RGBA16F;
 static constexpr GLuint JITTER_BUFFER_TYPE = GL_RG8;
 
@@ -176,14 +175,14 @@ int main() {
 	glTextureStorage2D(gbuffer, 1, GL_RGBA32F, renderw, renderh);
 	glTextureStorage2D(edgebuffer, 1, GL_R8, renderw, renderh);
 	glTextureStorage2D(zbuffer, 1, GL_R32F, renderw, renderh);
-	glTextureStorage3D(samplebuffer, 1, SAMPLE_BUFFER_TYPE, renderw, renderh, SAMPLES_PER_PIXEL);
-	glTextureStorage3D(jitterbuffer, 1, JITTER_BUFFER_TYPE, renderw, renderh, SAMPLES_PER_PIXEL);
+	glTextureStorage3D(samplebuffer, 1, SAMPLE_BUFFER_TYPE, renderw, renderh, 1);
+	glTextureStorage3D(jitterbuffer, 1, JITTER_BUFFER_TYPE, renderw, renderh, 1);
 
 	int abuffer_read_layer = 0, frame = 0;
 	int noiseLayer = -1;
 	CameraParameters cameras[2] = {};
 	glNamedBufferStorage(cameraData, sizeof(cameras), NULL, GL_DYNAMIC_STORAGE_BIT);
-	glNamedBufferStorage(pointBufferHeader, 2 * sizeof(int), NULL, GL_DYNAMIC_STORAGE_BIT); // TODO read bit only for debugging
+	glNamedBufferStorage(pointBufferHeader, 3 * sizeof(int), NULL, GL_DYNAMIC_STORAGE_BIT); // TODO read bit only for debugging
 	glNamedBufferStorage(pointBuffer, sizeof(RgbPoint) * MAX_POINT_COUNT, NULL, GL_DYNAMIC_STORAGE_BIT); // TODO read bit only for debugging
 	glNamedBufferStorage(colorBuffer, screenw * screenh * 3 * sizeof(int), NULL, 0);
 	glNamedBufferStorage(sampleWeightBuffer, screenw * screenh * sizeof(int), NULL, 0);
@@ -211,7 +210,7 @@ int main() {
 		// timestamp objects make gl queries at those locations; you can substract them to get the time
 		TimeStamp start;
 		float secs = getTime(); //fmod(frame / 60.f, 2.0) + 21.;
-		//secs = 1.;
+		secs = 1.;
 		float futureInterval = 2. / 60.f;
 		cameraPath(secs + futureInterval, cameras[1]);
 		glNamedBufferSubData(cameraData, 0, sizeof(cameras), &cameras);
@@ -243,7 +242,9 @@ int main() {
 		bindImage("edgebuffer", 0, edgebuffer, GL_WRITE_ONLY, GL_R8);
 		bindImage("samplebuffer", 0, samplebuffer, GL_WRITE_ONLY, SAMPLE_BUFFER_TYPE);
 		bindImage("jitterbuffer", 0, jitterbuffer, GL_WRITE_ONLY, JITTER_BUFFER_TYPE);
-		glDispatchCompute((screenw+17)/16, (screenh+17)/16, 1); // round up and add extra context
+		//glDispatchCompute((screenw+17)/16, (screenh+17)/16, 1); // round up and add extra context
+		glDispatchCompute(screenw/16, screenh/16, 1); // round up and add extra context
+		//glDispatchCompute(10, 20, 1); 
 
 		// we're writing to an image in a shader, so we should have a barrier to ensure the writes finish
 		// before the next shader call (wasn't an issue on my hardware in this case, but you should always make sure
@@ -260,6 +261,7 @@ int main() {
 					layout(std430) buffer pointBufferHeader {
 						int currentWriteOffset;
 						int pointsSplatted;
+						int nextRayIndex;
 					};
 
 					uniform int pointBufferMaxElements;
@@ -267,7 +269,7 @@ int main() {
 					void main() {
 						currentWriteOffset = currentWriteOffset % pointBufferMaxElements;
 						pointsSplatted = 0;
-						//currentWriteOffset = 0; // DEBUG HACK! remove
+						nextRayIndex = 0;
 					}
 				)
 			);
@@ -320,6 +322,7 @@ int main() {
 			layout(std430) buffer pointBufferHeader {
 				int currentWriteOffset;
 				int pointsSplatted;
+				int nextRayIndex;
 			};
 			
 			layout(std430) buffer pointBuffer {
@@ -546,7 +549,8 @@ int main() {
 						float weight = float(fixedWeight) / 1000.;
 						float alpha = float(fixedAlpha) / 255.;
 
-						alpha = pow(min(1., alpha/1.), 0.1);
+						alpha = pow(min(1., alpha / 2.), 0.1);
+						//alpha = pow(min(1., alpha/1.), 1.0);
 						if (edgeFactor == 0.) alpha = 1.;
 						vec3 color = vec3(icolor) / 10000.0;
 						if (weight > 0.) {
