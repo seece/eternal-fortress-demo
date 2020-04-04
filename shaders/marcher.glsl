@@ -61,6 +61,7 @@ struct RgbPoint {
 };
 
 uniform int pointBufferMaxElements;
+uniform int jumpBufferMaxElements;
 
 layout(std140) uniform cameraArray {
     CameraParams cameras[2];
@@ -69,15 +70,16 @@ layout(std140) uniform cameraArray {
 layout(std430) buffer pointBufferHeader {
     int currentWriteOffset;
     int pointsSplatted;
+    int nextRayIndex;
 };
 
 layout(std430) buffer pointBuffer {
     RgbPoint points[];
 };
 
-vec2 getThreadUV(uvec3 id) {
-    return vec2(id.xy) / 1024.0;
-}
+layout(std430) buffer jumpBuffer {
+    float jumps[];
+};
 
 float PIXEL_RADIUS;
 
@@ -293,37 +295,100 @@ float sampleAO(vec3 ro, vec3 rd)
     return 1. - obscurance / STEPS;
 }
 
+// Maps a ray index "i" into a bin index.
+int tobin(int i)
+{
+    return findMSB(3*i+1)>>1;
+}
+
+// Maps a bin index into a starting ray index. Inverse of "tobin(i)."
+int binto(int b)
+{
+    // Computes (4**b - 1) / 3
+    // FIXME: replace with a lookup table
+    int product = 1;
+    for (int i = 0; i < b; i++)
+        product *= 4;
+    return (product - 1) / 3;
+}
+
+uint z2x_1(uint x)
+{
+    x = x & 0x55555555;
+    x = (x | (x >> 1)) & 0x33333333;
+    x = (x | (x >> 2)) & 0x0F0F0F0F;
+    x = (x | (x >> 4)) & 0x00FF00FF;
+    x = (x | (x >> 8)) & 0x0000FFFF;
+    return x;
+}
+
+// Maps 32-bit Z-order index into 16-bit (x, y)
+uvec2 z2xy(uint z)
+{
+    return uvec2(z2x_1(z), z2x_1(z>>1));
+}
+
+vec2 i2ray(int i, out ivec2 squareCoord, out int parentIdx, out int sideLength)
+{
+    int b = tobin(i);
+    int start = binto(b);
+    int z = i - start;
+    uvec2 coord = z2xy(uint(z));
+    int dim = 1 << b;
+
+    int parent_size = (2 << (b-1));
+    parent_size *= parent_size;
+    int parent = int(start - parent_size) + (z/4);
+
+    float margin = 1.0 / float(2*dim);
+    float step = (1.0 - 1. / float(dim)) / float(dim);
+
+    squareCoord = ivec2(coord + vec2(.5));
+    parentIdx = parent;
+    sideLength = dim;
+     return vec2(margin) + step * vec2(coord);
+    //return step * vec2(coord);
+}
+
+
 void main() {
-    srand(frame, uint(gl_GlobalInvocationID.x), uint(gl_GlobalInvocationID.y));
-    jenkins_mix();
-    jenkins_mix();
     ivec2 res = imageSize(zbuffer).xy;
-    PIXEL_RADIUS = .5 * length(cameras[1].right) / res.x;
-    int samplesPerPixel = imageSize(samplebuffer).z;
 
-    float minDepth = 1e20;
+    const int maxRayIndex = res.x * res.y;
 
-    for (int sample_id=0; sample_id < samplesPerPixel; sample_id++)
+    if (nextRayIndex >= jumpBufferMaxElements)
+        return;
+
+    do
     {
-        int myPointOffset = atomicAdd(currentWriteOffset, 1);
-        myPointOffset %= pointBufferMaxElements;
+        int myIdx = atomicAdd(nextRayIndex, 1);
+        if (myIdx >= jumpBufferMaxElements)
+            return;
 
-        vec2 jitter;
+        int parentIdx = -1, sideLength = -1;
+        ivec2 squareCoord;
+        vec2 squareUV = i2ray(myIdx, squareCoord, parentIdx, sideLength);
 
-        jitter = vec2(rand() - 0.5, rand() - 0.5);
-        jitter *= 0.95;
+        ivec2 pixelCoord = squareCoord; //ivec2(myIdx % res.x, myIdx / res.x);
 
-        vec2 uv = getThreadUV(gl_GlobalInvocationID);
-        uv += jitter / imageSize(zbuffer).xy;
+        srand(frame, uint(pixelCoord.x), uint(pixelCoord.y));
+        jenkins_mix();
+        jenkins_mix();
+        PIXEL_RADIUS = .5 * length(cameras[1].right) / res.x;
 
-        if (any(greaterThan(uv, vec2(1.0)))) {
-            continue;
-        }
+        float minDepth = 1e20;
+
+        vec2 uv = vec2(pixelCoord) / vec2(res);
+        uv = squareUV; // FIXME: requires division by 1023 in splatter to avoid scaling! why
+
+        // if (any(greaterThan(uv, vec2(1.0)))) {
+        //     continue;
+        // }
 
         // Allow sampling half a pixel outside the screen
-        if (any(lessThan(uv, vec2(-0.5/res.x, -0.5/res.y)))) {
-            continue;
-        }
+        // if (any(lessThan(uv, vec2(-0.5/res.x, -0.5/res.y)))) {
+        //     continue;
+        // }
 
         CameraParams cam = cameras[1];
         vec3 p, dir;
@@ -334,6 +399,14 @@ void main() {
         int iters=0;
         float zdepth = march(p, dir, hitmat, restart, 400, iters);
         minDepth = min(minDepth, zdepth);
+
+        jumps[myIdx] = minDepth;
+
+        bool isLowestLevel = sideLength >= max(res.x, res.y);
+        if (!isLowestLevel) {
+            continue;
+        }
+
         float distance = length(p - cam.pos);
 
         vec3 color;
@@ -373,20 +446,35 @@ void main() {
             //color = vec3(0.5)+.5*cos( 10*vec3(iters)/600.  + vec3(0., 0.5, 1.));
         }
 
+        //color = vec3(uv, 0.);
+
+        if (uv.y >= 1023/1024.) {
+            color = vec3(0., 1., 0.);
+        }
+        if (uv.x >= 1023/1024.) {
+            color = vec3(1., 0., 0.);
+        }
+        if (uv.x <= 1/1024.) {
+            color = vec3(1., 1., 0.);
+        }
+
+
         if (hitmat != MATERIAL_SKY) {
+            int myPointOffset = atomicAdd(currentWriteOffset, 1);
+            myPointOffset %= pointBufferMaxElements;
+
             points[myPointOffset].xyzw = vec4(p, 0.);
             points[myPointOffset].rgba = vec4(color, 1.);
         }
-    }
 
-    imageStore(zbuffer, ivec2(gl_GlobalInvocationID.xy), vec4(minDepth));
-    if (minDepth >= 1e9) {
-        ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
-        for (int y=-1;y<=1;y++) {
-            for (int x=-1;x<=1;x++) {
-                imageStore(edgebuffer, coord + ivec2(x, y), vec4(1.));
+        imageStore(zbuffer, pixelCoord, vec4(minDepth));
+        if (minDepth >= 1e9) {
+            for (int y=-1;y<=1;y++) {
+                for (int x=-1;x<=1;x++) {
+                    imageStore(edgebuffer, pixelCoord + ivec2(x, y), vec4(1.));
+                }
             }
         }
-    }
+    } while (nextRayIndex < jumpBufferMaxElements);
 }
 

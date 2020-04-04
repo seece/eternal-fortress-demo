@@ -67,7 +67,24 @@ struct RgbPoint {
 	vec4 rgba;
 };
 
-constexpr int MAX_POINT_COUNT = 10. * 1024 * 1024;
+// Maps a bin index into a starting ray index. Inverse of "tobin(i)."
+int binto(int b)
+{
+	// Computes (4**b - 1) / 3
+	int product = 1;
+	for (int i = 0; i < b; i++)
+		product *= 4;
+	return (product - 1) / 3;
+}
+
+
+// How many nodes must a full quadtree have when leaf layer has "dim" nodes.
+int dim2nodecount(int dim)
+{
+	return binto(int(ceil(log2(dim))) + 1);
+}
+
+constexpr int MAX_POINT_COUNT = 1. * 1024 * 1024;
 
 int main() {
 
@@ -160,6 +177,7 @@ int main() {
 	Buffer pointBufferHeader;
 	Buffer pointBuffer;
 	Buffer colorBuffer, sampleWeightBuffer;
+	Buffer jumpbuffer;
 
 	//Framebuffer fbo;
 	//glBindFramebuffer(GL_FRAMEBUFFER, fbo);
@@ -178,7 +196,8 @@ int main() {
 	glTextureStorage3D(samplebuffer, 1, SAMPLE_BUFFER_TYPE, renderw, renderh, 1);
 	glTextureStorage3D(jitterbuffer, 1, JITTER_BUFFER_TYPE, renderw, renderh, 1);
 
-	int abuffer_read_layer = 0, frame = 0;
+	int pointsSplatted = 0;
+	int frame = 0;
 	int noiseLayer = -1;
 	CameraParameters cameras[2] = {};
 	glNamedBufferStorage(cameraData, sizeof(cameras), NULL, GL_DYNAMIC_STORAGE_BIT);
@@ -186,6 +205,9 @@ int main() {
 	glNamedBufferStorage(pointBuffer, sizeof(RgbPoint) * MAX_POINT_COUNT, NULL, GL_DYNAMIC_STORAGE_BIT); // TODO read bit only for debugging
 	glNamedBufferStorage(colorBuffer, screenw * screenh * 3 * sizeof(int), NULL, 0);
 	glNamedBufferStorage(sampleWeightBuffer, screenw * screenh * sizeof(int), NULL, 0);
+	
+	int jumpBufferMaxElements = dim2nodecount(max(screenw, screenh));
+	glNamedBufferStorage(jumpbuffer, jumpBufferMaxElements * sizeof(float), NULL, 0);
 
 	int zero = 0;
 	glClearNamedBufferData(pointBufferHeader, GL_R32I, GL_RED_INTEGER, GL_INT, &zero);
@@ -205,6 +227,10 @@ int main() {
 	printf("pointBuffer size: %" PRId64 " bytes = %.3f MiB\n", pointBufferSize, pointBufferSize / 1024. / 1024.);
 	printf("pointBufferMaxElements: %d\n", pointBufferMaxElements);
 
+	GLint64 jumpBufferSize = -1;
+	glGetNamedBufferParameteri64v(jumpbuffer, GL_BUFFER_SIZE, &jumpBufferSize);
+	printf("jumpBuffer size: %" PRId64 " bytes = %.3f MiB\n", jumpBufferSize, jumpBufferSize / 1024. / 1024.);
+
 	while (loop()) // loop() stops if esc pressed or window closed
 	{
 		// timestamp objects make gl queries at those locations; you can substract them to get the time
@@ -214,6 +240,8 @@ int main() {
 		float futureInterval = 2. / 60.f;
 		cameraPath(secs + futureInterval, cameras[1]);
 		glNamedBufferSubData(cameraData, 0, sizeof(cameras), &cameras);
+		float zeroFloat = 0.f;
+		glClearNamedBufferData(jumpbuffer, GL_R32F, GL_RED, GL_FLOAT, &zeroFloat);
 
 		{
 			int layer;
@@ -232,9 +260,11 @@ int main() {
 		glUniform1i("frame", frame);
 		glUniform1f("secs", secs);
 		glUniform1i("pointBufferMaxElements", pointBufferMaxElements);
+		glUniform1i("jumpBufferMaxElements", jumpBufferMaxElements);
 		bindBuffer("cameraArray", cameraData);
 		bindBuffer("pointBufferHeader", pointBufferHeader);
 		bindBuffer("pointBuffer", pointBuffer);
+		bindBuffer("jumpBuffer", jumpbuffer);
 		glUniform3i("noiseOffset", rand() % 64, rand() % 64, noiseLayer);
 		bindTexture("noiseTextures", noiseTextures);
 		//bindImage("gbuffer", 0, gbuffer, GL_WRITE_ONLY, GL_RGBA32F);
@@ -242,8 +272,9 @@ int main() {
 		bindImage("edgebuffer", 0, edgebuffer, GL_WRITE_ONLY, GL_R8);
 		bindImage("samplebuffer", 0, samplebuffer, GL_WRITE_ONLY, SAMPLE_BUFFER_TYPE);
 		bindImage("jitterbuffer", 0, jitterbuffer, GL_WRITE_ONLY, JITTER_BUFFER_TYPE);
+
 		//glDispatchCompute((screenw+17)/16, (screenh+17)/16, 1); // round up and add extra context
-		glDispatchCompute(screenw/16, screenh/16, 1); // round up and add extra context
+		glDispatchCompute(screenw/16, screenh/16, 1); // TODO scale to max GPU occupancy?
 		//glDispatchCompute(10, 20, 1); 
 
 		// we're writing to an image in a shader, so we should have a barrier to ensure the writes finish
@@ -385,9 +416,9 @@ int main() {
 					return;
 
 				vec3 camSpace = reprojectPoint(cameras[1], pos.xyz);
-				vec2 screenSpace = camSpace.xy * vec2(screenSize);
-				int x = int(screenSpace.x + 0.5);
-				int y = int(screenSpace.y + 0.5);
+				vec2 screenSpace = camSpace.xy * vec2(screenSize+1);
+				int x = int(screenSpace.x);
+				int y = int(screenSpace.y);
 
 				if (x < 0 || y < 0 || x >= screenSize.x || y >= screenSize.y)
 					return;
@@ -396,7 +427,7 @@ int main() {
 				bool isEdge = imageLoad(edgebuffer, ivec2(x, y)).x > 0;
 				float distance = length(pos.xyz - cameras[1].pos);
 				float fog = pow(min(1., distance / 15.), 1.0);
-				c = mix(c, vec3(0.1, 0.1, 0.2)*0.1, fog);
+				//c = mix(c, vec3(0.1, 0.1, 0.2)*0.1, fog);
 
 				c = c / (vec3(1.) + c);
 				c = clamp(c, vec3(0.), vec3(10.));
@@ -431,10 +462,6 @@ int main() {
 					atomicAdd(sampleWeights[idx + 1],					(uint(1000 * weight * ws[1]) << 16) | uint(255 * ws[1]));
 					atomicAdd(sampleWeights[idx + screenSize.x],		(uint(1000 * weight * ws[2]) << 16) | uint(255 * ws[2]));
 					atomicAdd(sampleWeights[idx + screenSize.x + 1],	(uint(1000 * weight * ws[3]) << 16) | uint(255 * ws[3]));
-
-					//col += w.x * (1. - w.y) * texelFetch(abuffer, ivec3(uv2pix + vec2(1., 0), abuffer_read_layer), 0);
-					//col += (1. - w.x) * w.y * texelFetch(abuffer, ivec3(uv2pix + vec2(0., 1.), abuffer_read_layer), 0);
-					//col += w.x * w.y * texelFetch(abuffer, ivec3(uv2pix + vec2(1., 1.), abuffer_read_layer), 0);
 				}
 
 				atomicAdd(pointsSplatted, 1);
@@ -469,13 +496,11 @@ int main() {
 
 		int data[2];
 		glGetNamedBufferSubData(pointBufferHeader, 0, 8, data);
-		printf("currentWriteOffset: %d\n", data[0]);
-		printf("pointsSplatted: %d\t(%.3f million)\n", data[1], data[1]/1000000.);
+		//printf("currentWriteOffset: %d\n", data[0]);
+		pointsSplatted = data[1];
+		//printf("pointsSplatted: %d\t(%.3f million)\n", data[1], data[1]/1000000.);
 
 		TimeStamp resolveTime;
-
-		// flip the ping-pong flag
-		abuffer_read_layer = 1 - abuffer_read_layer;
 
 		#define USE_BILINEAR_HISTORY_SAMPLE 0
 
@@ -544,6 +569,7 @@ int main() {
 						);
 
 						float edgeFactor = imageLoad(edgebuffer, ivec2(gl_FragCoord.xy)).x;
+						edgeFactor = 0.; // DEBUG HACK: edgebuffer disabled
 
 						uint weightAlphaPacked = sampleWeights[pixelIdx];
 						uint fixedWeight = weightAlphaPacked >> 16;
@@ -600,6 +626,7 @@ int main() {
 		font.drawText(L"Draw: " + std::to_wstring(drawTime - start), 10.f, 25.f, 15.f);
 		font.drawText(L"Splat: " + std::to_wstring(splatTime - drawTime), 10.f, 40.f, 15.f);
 		font.drawText(L"PostProc: " + std::to_wstring(end - splatTime), 10.f, 55.f, 15.f);
+		font.drawText(L"Points: " + std::to_wstring(pointsSplatted / 1000. / 1000.) + L" M", 200.f, 10.f, 15.f);
 
 		// this actually displays the rendered image
 		swapBuffers();

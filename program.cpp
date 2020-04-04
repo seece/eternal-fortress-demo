@@ -65,9 +65,13 @@ GLuint Program::createShader(std::string_view path, const GLenum shaderType) {
 	auto source_ptr = (const GLchar*)source.data();
 	const GLint source_len = GLint(source.length());
 
-	//glShaderSourcePrint(shader, 1, &source_ptr, &source_len);
-	// TODO: Disable shader printf for now since it's SSBO clashes (?) with another one
+#if 0
+	glShaderSourcePrint(shader, 1, &source_ptr, &source_len);
+#else
+	// Disable shader printf for now since it doesn't always work
 	glShaderSource(shader, 1, &source_ptr, &source_len);
+	
+#endif
 	glCompileShader(shader);
 
 	// print error log if failed to compile

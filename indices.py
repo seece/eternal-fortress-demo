@@ -1,3 +1,7 @@
+import math
+
+def log2(x):
+    return math.log(x)/math.log(2)
 
 def tobin(i):
     """
@@ -5,6 +9,18 @@ def tobin(i):
     """
     #return int(log(3*y+1)/log(2))>>1
     return int((3*i+1).bit_length()-1)>>1
+
+def findMSB(x):
+    if x == 0 or x == -1:
+        return -1
+    return x.bit_length()-1
+
+def tobin2(i):
+    """
+    Maps a ray index "i" into a bin index.
+    """
+    #return int(log(3*y+1)/log(2))>>1
+    return int(findMSB(3*i+1))>>1
 
 def binto(b):
     """
@@ -72,7 +88,7 @@ def dim2nodecount(dim):
     How many nodes must the whole hierarchy have, when leaf layer
     has "dim" nodes.
     """
-     return binto(int(math.ceil(log2(dim))) + 1)
+    return binto(int(math.ceil(log2(dim))) + 1)
 
 i2ray(0)
 i2ray(3)
