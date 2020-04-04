@@ -403,6 +403,8 @@ int main() {
 
 				float weight = max(0.1, min(1e3, 1. / (pow(camSpace.z / 3., 2.) + 0.001)));
 
+				isEdge = false; // DEBUG: edge smoothing disabled for performance comparisons
+
 				if (!isEdge) {
 					uvec3 icolor = uvec3(weight * 8000 * c);
 					addRGB(pixelIdx, icolor);
