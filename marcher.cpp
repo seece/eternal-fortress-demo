@@ -178,6 +178,7 @@ int main() {
 	Buffer pointBuffer;
 	Buffer colorBuffer, sampleWeightBuffer;
 	Buffer jumpbuffer;
+	Buffer debugBuffer;
 
 	//Framebuffer fbo;
 	//glBindFramebuffer(GL_FRAMEBUFFER, fbo);
@@ -205,6 +206,7 @@ int main() {
 	glNamedBufferStorage(pointBuffer, sizeof(RgbPoint) * MAX_POINT_COUNT, NULL, GL_DYNAMIC_STORAGE_BIT); // TODO read bit only for debugging
 	glNamedBufferStorage(colorBuffer, screenw * screenh * 3 * sizeof(int), NULL, 0);
 	glNamedBufferStorage(sampleWeightBuffer, screenw * screenh * sizeof(int), NULL, 0);
+	glNamedBufferStorage(debugBuffer, 1024 * sizeof(int), NULL, 0);
 	
 	int jumpBufferMaxElements = dim2nodecount(max(screenw, screenh));
 	glNamedBufferStorage(jumpbuffer, jumpBufferMaxElements * sizeof(float), NULL, 0);
@@ -212,9 +214,10 @@ int main() {
 	int zero = 0;
 	glClearNamedBufferData(pointBufferHeader, GL_R32I, GL_RED_INTEGER, GL_INT, &zero);
 	glClearNamedBufferData(pointBuffer, GL_R32I, GL_RED_INTEGER, GL_INT, &zero);
+	glClearNamedBufferData(debugBuffer, GL_R32I, GL_RED_INTEGER, GL_INT, &zero);
+
 	int thousand = 1000;
 	int hundred = 100;
-
 	glClearNamedBufferData(colorBuffer, GL_R32UI, GL_RED_INTEGER, GL_UNSIGNED_INT, &thousand);
 	glClearNamedBufferData(sampleWeightBuffer, GL_R32UI, GL_RED_INTEGER, GL_UNSIGNED_INT, &hundred);
 
@@ -265,6 +268,7 @@ int main() {
 		bindBuffer("pointBufferHeader", pointBufferHeader);
 		bindBuffer("pointBuffer", pointBuffer);
 		bindBuffer("jumpBuffer", jumpbuffer);
+		bindBuffer("debugBuffer", debugBuffer);
 		glUniform3i("noiseOffset", rand() % 64, rand() % 64, noiseLayer);
 		bindTexture("noiseTextures", noiseTextures);
 		//bindImage("gbuffer", 0, gbuffer, GL_WRITE_ONLY, GL_RGBA32F);
@@ -416,7 +420,7 @@ int main() {
 					return;
 
 				vec3 camSpace = reprojectPoint(cameras[1], pos.xyz);
-				vec2 screenSpace = camSpace.xy * vec2(screenSize+1);
+				vec2 screenSpace = camSpace.xy * vec2(screenSize.x+1, screenSize.y+1);
 				int x = int(screenSpace.x);
 				int y = int(screenSpace.y);
 
@@ -493,6 +497,21 @@ int main() {
 		glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_SHADER_STORAGE_BARRIER_BIT | GL_ATOMIC_COUNTER_BARRIER_BIT);
 
 		TimeStamp splatTime;
+
+		struct DebugData {
+			int i;
+			int parent;
+			int size;
+			int b;
+			int start;
+			int parent_size;
+		};
+		DebugData debugData = {};
+		glGetNamedBufferSubData(debugBuffer, 0, sizeof(DebugData), &debugData);
+
+		printf("debugData: i: %d, parent: %d, size: %d, b: %d, start: %d, parent_size: %d\n",
+			debugData.i, debugData.parent, debugData.size, debugData.b, debugData.start,
+			debugData.parent_size);
 
 		int data[2];
 		glGetNamedBufferSubData(pointBufferHeader, 0, 8, data);

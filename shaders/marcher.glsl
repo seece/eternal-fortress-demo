@@ -81,6 +81,15 @@ layout(std430) buffer jumpBuffer {
     float jumps[];
 };
 
+layout(std430) buffer debugBuffer {
+    int debug_i;
+    int debug_parent;
+    int debug_size;
+    int debug_b;
+    int debug_start;
+    int debug_parent_size;
+};
+
 float PIXEL_RADIUS;
 
 // This factor how many pixel radiuses of screen space error do we allow
@@ -335,9 +344,9 @@ vec2 i2ray(int i, out ivec2 squareCoord, out int parentIdx, out int sideLength)
     int z = i - start;
     uvec2 coord = z2xy(uint(z));
     int dim = 1 << b;
+    int size = dim * dim;
 
-    int parent_size = (2 << (b-1));
-    parent_size *= parent_size;
+    int parent_size = size >> 2; // (2 << (b-1));
     int parent = int(start - parent_size) + (z/4);
 
     float margin = 1.0 / float(2*dim);
@@ -346,7 +355,21 @@ vec2 i2ray(int i, out ivec2 squareCoord, out int parentIdx, out int sideLength)
     squareCoord = ivec2(coord + vec2(.5));
     parentIdx = parent;
     sideLength = dim;
-     return vec2(margin) + step * vec2(coord);
+
+    vec2 uv = vec2(margin) + step * vec2(coord);
+
+    if (i == 5) {
+        debug_i = i;
+        debug_parent = parent;
+        debug_size = dim;
+        debug_b = b;
+        debug_start = start;
+        debug_parent_size = parent_size;
+    }
+
+
+
+     return uv;
     //return step * vec2(coord);
 }
 
@@ -365,7 +388,7 @@ void main() {
         if (myIdx >= jumpBufferMaxElements)
             return;
 
-        int parentIdx = -1, sideLength = -1;
+        int parentIdx = -2, sideLength = -1;
         ivec2 squareCoord;
         vec2 squareUV = i2ray(myIdx, squareCoord, parentIdx, sideLength);
 
@@ -376,19 +399,19 @@ void main() {
         jenkins_mix();
         PIXEL_RADIUS = .5 * length(cameras[1].right) / res.x;
 
-        float minDepth = 1e20;
-
         vec2 uv = vec2(pixelCoord) / vec2(res);
         uv = squareUV; // FIXME: requires division by 1023 in splatter to avoid scaling! why
 
-        // if (any(greaterThan(uv, vec2(1.0)))) {
-        //     continue;
-        // }
+        if (any(greaterThan(uv, vec2(1.0)))) {
+            continue;
+        }
 
         // Allow sampling half a pixel outside the screen
-        // if (any(lessThan(uv, vec2(-0.5/res.x, -0.5/res.y)))) {
-        //     continue;
-        // }
+        if (any(lessThan(uv, vec2(-0.5/res.x, -0.5/res.y)))) {
+            continue;
+        }
+
+        float parentDepth = jumps[parentIdx];
 
         CameraParams cam = cameras[1];
         vec3 p, dir;
@@ -398,9 +421,12 @@ void main() {
         vec2 restart;
         int iters=0;
         float zdepth = march(p, dir, hitmat, restart, 400, iters);
-        minDepth = min(minDepth, zdepth);
 
-        jumps[myIdx] = minDepth;
+        if (sideLength >= 256) {
+            zdepth = parentDepth;
+        }
+
+        jumps[myIdx] = zdepth;
 
         bool isLowestLevel = sideLength >= max(res.x, res.y);
         if (!isLowestLevel) {
@@ -446,18 +472,13 @@ void main() {
             //color = vec3(0.5)+.5*cos( 10*vec3(iters)/600.  + vec3(0., 0.5, 1.));
         }
 
-        //color = vec3(uv, 0.);
-
-        if (uv.y >= 1023/1024.) {
-            color = vec3(0., 1., 0.);
-        }
-        if (uv.x >= 1023/1024.) {
+        color = vec3(pow(zdepth/10., 5.));
+        if (zdepth == 0.){
             color = vec3(1., 0., 0.);
         }
-        if (uv.x <= 1/1024.) {
-            color = vec3(1., 1., 0.);
+        if (parentIdx < 0) {
+            color = vec3(0., 1., 0.);
         }
-
 
         if (hitmat != MATERIAL_SKY) {
             int myPointOffset = atomicAdd(currentWriteOffset, 1);
@@ -467,8 +488,8 @@ void main() {
             points[myPointOffset].rgba = vec4(color, 1.);
         }
 
-        imageStore(zbuffer, pixelCoord, vec4(minDepth));
-        if (minDepth >= 1e9) {
+        imageStore(zbuffer, pixelCoord, vec4(zdepth));
+        if (zdepth >= 1e9) {
             for (int y=-1;y<=1;y++) {
                 for (int x=-1;x<=1;x++) {
                     imageStore(edgebuffer, pixelCoord + ivec2(x, y), vec4(1.));
