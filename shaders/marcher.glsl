@@ -214,10 +214,10 @@ vec2 shadowMarch(inout vec3 p, vec3 rd, int num_iters, float w, float mint, floa
     return vec2(t, closest);
 }
 
-float depth_march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int num_iters, out int out_iters, float maxDist=20.) {
+float depth_march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int num_iters, out int out_iters, float start_t=0., float end_t=20.) {
     vec3 ro = p;
     int i;
-    float t = 0.;
+    float t = start_t;
     int mat;
     float last_t = t;
     material = MATERIAL_OTHER;
@@ -236,14 +236,14 @@ float depth_march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int
         last_t = t;
         t += d;
 
-        if (t >= maxDist) {
+        if (t >= end_t) {
             break;
         }
     }
 
     out_iters = i;
 
-    if (t >= maxDist) {
+    if (t >= end_t) {
         material = MATERIAL_SKY;
         return MAX_DISTANCE;
     }
@@ -251,10 +251,10 @@ float depth_march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int
     return t;
 }
 
-float march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int num_iters, out int out_iters, float maxDist=20.) {
+float march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int num_iters, out int out_iters, float start_t=0., float end_t=20.) {
     vec3 ro = p;
     int i;
-    float t = 0.;
+    float t = start_t;
     int mat;
     material = MATERIAL_OTHER;
 
@@ -270,14 +270,14 @@ float march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int num_i
 
         t += d;
 
-        if (t >= maxDist) {
+        if (t >= end_t) {
             break;
         }
     }
 
     out_iters = i;
 
-    if (t >= maxDist) {
+    if (t >= end_t) {
         material = MATERIAL_SKY;
         return MAX_DISTANCE;
     }
@@ -498,14 +498,12 @@ void main() {
         int iters=0;
         float zdepth = parentDepth;
 
-        p += dir * parentDepth;
-
         bool isLowestLevel = sideLength >= max(res.x, res.y);
 
         if (isLowestLevel) {
-            zdepth += march(p, dir, hitmat, restart, 400, iters);
+            zdepth = march(p, dir, hitmat, restart, 400, iters, parentDepth);
         } else {
-            zdepth += depth_march(p, dir, hitmat, restart, 100, iters);
+            zdepth = depth_march(p, dir, hitmat, restart, 100, iters, parentDepth);
         }
 
         if (myIdx == 0) {
