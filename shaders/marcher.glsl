@@ -496,16 +496,16 @@ void main() {
         int hitmat = MATERIAL_SKY;
         vec2 restart;
         int iters=0;
-        float zdepth;
+        float zdepth = parentDepth;
 
         p += dir * parentDepth;
 
         bool isLowestLevel = sideLength >= max(res.x, res.y);
 
         if (isLowestLevel) {
-            zdepth = march(p, dir, hitmat, restart, 400, iters);
+            zdepth += march(p, dir, hitmat, restart, 400, iters);
         } else {
-            zdepth = depth_march(p, dir, hitmat, restart, 100, iters);
+            zdepth += depth_march(p, dir, hitmat, restart, 100, iters);
         }
 
         if (myIdx == 0) {
