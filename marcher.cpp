@@ -1,6 +1,7 @@
 
 #include "testbench.h"
 #include <cinttypes>
+#include <cassert>
 
 struct CameraParameters {
 	vec3 pos;
@@ -41,13 +42,15 @@ static void cameraPath(float t, CameraParameters& cam)
 {
 	float tt = t * 0.1f / 8.;
 	//cam.pos = vec3(0.5f*sin(tt), 0.f, 6.f + 0.5f*cos(tt));
-	cam.pos = vec3(0. + 2.0 * sin(tt), -4., 7.f + 0.1f*cos(tt));
-	cam.dir = normalize(vec3(0.5f*cos(tt*0.5f), 0.3 + 0.2f*sin(tt), -1.f));
+	//cam.pos = vec3(0. + 2.0 * sin(tt), -4., 7.f + 0.1f*cos(tt));
+	//cam.dir = normalize(vec3(0.5f*cos(tt*0.5f), 0.3 + 0.2f*sin(tt), -1.f));
+	cam.pos = vec3(0., 0., 4.);
+	cam.dir = vec3(0., 0., -1.);
 	cam.right = normalize(cross(cam.dir, vec3(0.f, 1.f, 0.f)));
 	cam.up = cross(cam.dir, cam.right);
 	
 	float nearplane = 0.1f;
-	float zoom = 4.0f;
+	float zoom = 1.0f;
 	cam.dir *= nearplane;
 	cam.right *= nearplane;
 	cam.right /= zoom;
@@ -67,6 +70,11 @@ struct RgbPoint {
 	vec4 rgba;
 };
 
+int tobin(int i)
+{
+	return int(log2(3 * i + 1)) >> 1;
+}
+
 // Maps a bin index into a starting ray index. Inverse of "tobin(i)."
 int binto(int b)
 {
@@ -77,6 +85,21 @@ int binto(int b)
 	return (product - 1) / 3;
 }
 
+uint z2x_1(uint x)
+{
+	x = x & 0x55555555;
+	x = (x | (x >> 1)) & 0x33333333;
+	x = (x | (x >> 2)) & 0x0F0F0F0F;
+	x = (x | (x >> 4)) & 0x00FF00FF;
+	x = (x | (x >> 8)) & 0x0000FFFF;
+	return x;
+}
+
+// Maps 32-bit Z-order index into 16-bit (x, y)
+uvec2 z2xy(uint z)
+{
+	return uvec2(z2x_1(z), z2x_1(z >> 1));
+}
 
 // How many nodes must a full quadtree have when leaf layer has "dim" nodes.
 int dim2nodecount(int dim)
@@ -239,7 +262,7 @@ int main() {
 		// timestamp objects make gl queries at those locations; you can substract them to get the time
 		TimeStamp start;
 		float secs = getTime(); //fmod(frame / 60.f, 2.0) + 21.;
-		secs = 1.;
+		secs = 0.;
 		float futureInterval = 2. / 60.f;
 		cameraPath(secs + futureInterval, cameras[1]);
 		glNamedBufferSubData(cameraData, 0, sizeof(cameras), &cameras);
@@ -505,19 +528,62 @@ int main() {
 			int b;
 			int start;
 			int parent_size;
+			float pixelRadius;
+			float zdepth;
+			float parentDepth;
 		};
 		DebugData debugData = {};
 		glGetNamedBufferSubData(debugBuffer, 0, sizeof(DebugData), &debugData);
 
-		printf("debugData: i: %d, parent: %d, size: %d, b: %d, start: %d, parent_size: %d\n",
+		printf("debugData: i: %d, parent: %d, size: %d, b: %d, start: %d, parent_size: %d,\nradius: %f, zdepth: %f, parentDepth: %f\n",
 			debugData.i, debugData.parent, debugData.size, debugData.b, debugData.start,
-			debugData.parent_size);
+			debugData.parent_size,
+			debugData.pixelRadius, debugData.zdepth, debugData.parentDepth);
 
 		int data[2];
 		glGetNamedBufferSubData(pointBufferHeader, 0, 8, data);
 		//printf("currentWriteOffset: %d\n", data[0]);
 		pointsSplatted = data[1];
 		//printf("pointsSplatted: %d\t(%.3f million)\n", data[1], data[1]/1000000.);
+
+		if (false) {
+			std::vector<float> jumpData(jumpBufferMaxElements, 0.f);
+			glGetNamedBufferSubData(jumpbuffer, 0, jumpBufferSize, jumpData.data());
+			for (int i = 0; i < jumpBufferMaxElements; i++) {
+				int b = tobin(i);
+				int start = binto(b);
+				int z = i - start;
+				uvec2 coord = z2xy(uint(z));
+				int dim = 1 << b;
+				int size = dim * dim;
+
+				int parent_size = size >> 2; 
+				int parent = int(start - parent_size) + (z / 4);
+
+				
+					int pb = tobin(parent);
+					int pstart = binto(pb);
+					int pz = parent - pstart;
+					uvec2 pcoord = z2xy(uint(pz));
+					int pdim = 1 << pb;
+					int psize = pdim * pdim;
+
+				// printf("coord: (%u, %u) of %dx%d, pcoord: (%u, %u)\n", coord.x, coord.y, dim, dim, pcoord.x, pcoord.y);
+				assert(coord.x / 2 == pcoord.x);
+				assert(coord.y / 2 == pcoord.y);
+				
+
+				float myz = jumpData[i];
+				float parentz = jumpData[parent];
+				if (myz < parentz) {
+					//printf("z[%d] %f < z[%d] %f!\n", i, myz, parent, parentz);
+					//puts("fail");
+				}
+			}
+		}
+
+		// DEBUG HACK: clear points every frame
+		glClearNamedBufferData(pointBuffer, GL_R32F, GL_RED, GL_FLOAT, &zeroFloat);
 
 		TimeStamp resolveTime;
 

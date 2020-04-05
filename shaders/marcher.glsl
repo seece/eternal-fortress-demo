@@ -88,9 +88,14 @@ layout(std430) buffer debugBuffer {
     int debug_b;
     int debug_start;
     int debug_parent_size;
+    float debug_pixelRadius;
+    float debug_zdepth;
+    float debug_parentDepth;
 };
 
 float PIXEL_RADIUS;
+float PROJECTION_PLANE_DIST;
+float NEAR_PLANE;
 
 // This factor how many pixel radiuses of screen space error do we allow
 // in the "near geometry snapping" at the end of "march" loop. Without it
@@ -140,13 +145,19 @@ float mandelbox(vec3 position, int iters=7) {
     return d;
 }
 
-float scene(vec3 p, out int material, float pixelConeSize=1.) {
+float scene_old(vec3 p, out int material, float pixelConeSize=1.) {
 	material = MATERIAL_OTHER;
 	return mandelbox(p, 9);
 }
 
+float scene(vec3 p, out int material, float pixelConeSize=1.) {
+	material = MATERIAL_OTHER;
+    float d = length(p + 0.25*vec3(cos(secs*1.), 0., 0.)) - 1.;
+    return d;
+}
+
 vec3 evalnormal(vec3 p) {
-	vec2 e=vec2(1e-5, 0.f);
+	vec2 e=vec2(1e-3, 0.f); //vec2 e=vec2(1e-5, 0.f);
 	int m;
 	return normalize(vec3(
 				scene(p + e.xyy,m) - scene(p - e.xyy,m),
@@ -203,8 +214,80 @@ vec2 shadowMarch(inout vec3 p, vec3 rd, int num_iters, float w, float mint, floa
     return vec2(t, closest);
 }
 
-// Raymarching loop based on techniques of Keinert et al. "Enhanced Sphere Tracing", 2014.
+float depth_march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int num_iters, out int out_iters, float maxDist=20.) {
+    vec3 ro = p;
+    int i;
+    float t = 0.;
+    int mat;
+    float last_t = t;
+    material = MATERIAL_OTHER;
+
+    for (i = 0; i < num_iters; i++) {
+        float d = scene(ro + t * rd, mat);
+
+        float coneWorldRadius = PIXEL_RADIUS * ((t + PROJECTION_PLANE_DIST) / PROJECTION_PLANE_DIST);
+
+        if (d <= coneWorldRadius) {
+            // In depth rays we write the earlier, "safe", z value to the buffer.
+            t = last_t;
+            break;
+        }
+
+        last_t = t;
+        t += d;
+
+        if (t >= maxDist) {
+            break;
+        }
+    }
+
+    out_iters = i;
+
+    if (t >= maxDist) {
+        material = MATERIAL_SKY;
+        return MAX_DISTANCE;
+    }
+
+    return t;
+}
+
 float march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int num_iters, out int out_iters, float maxDist=20.) {
+    vec3 ro = p;
+    int i;
+    float t = 0.;
+    int mat;
+    material = MATERIAL_OTHER;
+
+    for (i = 0; i < num_iters; i++) {
+        float d = scene(ro + t * rd, mat);
+
+        float coneWorldRadius = PIXEL_RADIUS + (t * PIXEL_RADIUS) / NEAR_PLANE;
+
+        if (d <= coneWorldRadius) {
+            // In depth rays we write the earlier, "safe", z value to the buffer.
+            material = mandelbox_material(ro + t * rd);
+            break;
+        }
+
+        t += d;
+
+        if (t >= maxDist) {
+            break;
+        }
+    }
+
+    out_iters = i;
+
+    if (t >= maxDist) {
+        material = MATERIAL_SKY;
+        return MAX_DISTANCE;
+    }
+
+    return t;
+}
+
+// Raymarching loop based on techniques of Keinert et al. "Enhanced Sphere Tracing", 2014.
+float march_old(inout vec3 p, vec3 rd, out int material, out vec2 restart, int num_iters, out int out_iters, float maxDist=20.) {
     vec3 ro = p;
     int i;
     float omega = 1.3;
@@ -217,8 +300,6 @@ float march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int num_i
     float last_d = 0.;
     float step = 0.;
     material = MATERIAL_OTHER;
-    float coneSizeSlope = PIXEL_RADIUS / cameras[1].nearplane;
-    // coneSizeSlope += 0.001*rand();
 
     for (i = 0; i < num_iters; i++) {
         float d = scene(ro + t * rd, mat);
@@ -231,7 +312,7 @@ float march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int num_i
             step = d * omega;
         }
 
-        float error = d / t;
+        float error = d / t; // FIXME: should be d/(t+1)? division of zero here
 
         if (d > last_d && error < restart_error) {
             restart_t = t;
@@ -245,7 +326,8 @@ float march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int num_i
             candidate_error = error;
         }
 
-        if (!sorFail && error < 4.*PIXEL_RADIUS || t >= maxDist) {
+        //if (!sorFail && error < 4.*PIXEL_RADIUS || t >= maxDist) {
+        if (!sorFail && error < PIXEL_RADIUS || t >= maxDist) {
             material = mandelbox_material(ro + t * rd);
             //material = mat;
             break;
@@ -273,7 +355,6 @@ float march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int num_i
     t = candidate_t;
     p = ro + t * rd;
 
-
     // See "Enhanced Sphere Tracing" section 3.4. and
     // section 3.1.1 in "Efficient Antialiased Rendering of 3-D Linear Fractals"
     for (int i = 0; i < 2; i++) {
@@ -282,9 +363,7 @@ float march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int num_i
         t += scene(ro + t*rd, temp) - e;
     }
 
-
     return t;
-
 }
 
 float sampleAO(vec3 ro, vec3 rd)
@@ -358,7 +437,7 @@ vec2 i2ray(int i, out ivec2 squareCoord, out int parentIdx, out int sideLength)
 
     vec2 uv = vec2(margin) + step * vec2(coord);
 
-    if (i == 5) {
+    if (i == 599) {
         debug_i = i;
         debug_parent = parent;
         debug_size = dim;
@@ -366,8 +445,6 @@ vec2 i2ray(int i, out ivec2 squareCoord, out int parentIdx, out int sideLength)
         debug_start = start;
         debug_parent_size = parent_size;
     }
-
-
 
      return uv;
     //return step * vec2(coord);
@@ -379,11 +456,7 @@ void main() {
 
     const int maxRayIndex = res.x * res.y;
 
-    if (nextRayIndex >= jumpBufferMaxElements)
-        return;
-
-    do
-    {
+    while (nextRayIndex < jumpBufferMaxElements) {
         int myIdx = atomicAdd(nextRayIndex, 1);
         if (myIdx >= jumpBufferMaxElements)
             return;
@@ -397,7 +470,6 @@ void main() {
         srand(frame, uint(pixelCoord.x), uint(pixelCoord.y));
         jenkins_mix();
         jenkins_mix();
-        PIXEL_RADIUS = .5 * length(cameras[1].right) / res.x;
 
         vec2 uv = vec2(pixelCoord) / vec2(res);
         uv = squareUV; // FIXME: requires division by 1023 in splatter to avoid scaling! why
@@ -417,18 +489,38 @@ void main() {
         vec3 p, dir;
         getCameraProjection(cam, uv, p, dir);
 
+        //PIXEL_RADIUS = .5 * length(cameras[1].right) / res.x;
+        PIXEL_RADIUS = sqrt(2.) * .5 * length(cam.right) / float(sideLength);
+        PROJECTION_PLANE_DIST = length(p - cam.pos);
+        NEAR_PLANE = length(cam.dir);
+
         int hitmat = MATERIAL_SKY;
         vec2 restart;
         int iters=0;
-        float zdepth = march(p, dir, hitmat, restart, 400, iters);
+        float zdepth;
 
-        if (sideLength >= 256) {
-            zdepth = parentDepth;
-        }
-
-        jumps[myIdx] = zdepth;
+        p += dir * parentDepth;
 
         bool isLowestLevel = sideLength >= max(res.x, res.y);
+
+        if (isLowestLevel) {
+            zdepth = march(p, dir, hitmat, restart, 400, iters);
+        } else {
+            zdepth = depth_march(p, dir, hitmat, restart, 100, iters);
+        }
+
+        if (myIdx == 0) {
+            debug_pixelRadius = PIXEL_RADIUS;
+            debug_zdepth = zdepth;
+            debug_parentDepth = parentDepth;
+        }
+
+        // if (sideLength >= 256) {
+        //     zdepth = parentDepth;
+        // }
+
+        jumps[myIdx] = zdepth + 1e-6;
+
         if (!isLowestLevel) {
             continue;
         }
@@ -445,42 +537,51 @@ void main() {
             vec3 to_camera = normalize(cam.pos - p);
             vec3 to_light = normalize(vec3(-0.5, -1.0, 0.7));
 
-            vec3 shadowRayPos = p + to_camera * 1e-4;
-            const float maxShadowDist = 10.;
-            vec2 shadowResult = shadowMarch(shadowRayPos, to_light, 400, 9e-2, 0.01, maxShadowDist);
-            float sun = min(shadowResult.x, maxShadowDist) / maxShadowDist;
-            //sun = max(0., shadowResult.y - 0.1);
-            //sun = (sun+0.1) * shadowResult.y;
+            // HACK: Disable shading
+            if (false) {
+                vec3 shadowRayPos = p + to_camera * 1e-4;
+                const float maxShadowDist = 10.;
+                vec2 shadowResult = shadowMarch(shadowRayPos, to_light, 400, 9e-2, 0.01, maxShadowDist);
+                float sun = min(shadowResult.x, maxShadowDist) / maxShadowDist;
+                //sun = max(0., shadowResult.y - 0.1);
+                //sun = (sun+0.1) * shadowResult.y;
 
-            //float sun = min(1.0, shadowResult.y*1e3);
-            sun = pow(sun, 2.);
+                //float sun = min(1.0, shadowResult.y*1e3);
+                sun = pow(sun, 2.);
 
-            float ambient = sampleAO(p, normal);
-            ambient = pow(ambient, 2.0);
+                float ambient = sampleAO(p, normal);
+                ambient = pow(ambient, 2.0);
 
-            float facing = max(0., dot(normal, to_light));
+                float facing = max(0., dot(normal, to_light));
 
-            vec3 base = vec3(.5) + .5*vec3(sin(hitmat + vec3(0., .5, 1.)));
+                vec3 base = vec3(.5) + .5*vec3(sin(hitmat + vec3(0., .5, 1.)));
 
 
-            //color = base * sun * vec3(facing);
-            color = vec3(sun);
-            vec3 skycolor = vec3(0.5, 0.7, 1.0);
-            vec3 suncolor = vec3(1., 0.8, 0.5);
-            color = base * (ambient * skycolor + facing * sun * suncolor);
-            color = clamp(color, vec3(0.), vec3(10.));
-            //color = vec3(0.5)+.5*cos( 10*vec3(iters)/600.  + vec3(0., 0.5, 1.));
+                //color = base * sun * vec3(facing);
+                color = vec3(sun);
+                vec3 skycolor = vec3(0.5, 0.7, 1.0);
+                vec3 suncolor = vec3(1., 0.8, 0.5);
+                color = base * (ambient * skycolor + facing * sun * suncolor);
+                color = clamp(color, vec3(0.), vec3(10.));
+                //color = vec3(0.5)+.5*cos( 10*vec3(iters)/600.  + vec3(0., 0.5, 1.));
+            } else {
+                color = vec3(normal); // * vec3(0., 1., 0.);
+            }
         }
 
-        color = vec3(pow(zdepth/10., 5.));
+        color = vec3(pow(zdepth/10., 4.));
+        //color = vec3(.0)+.5*sin(vec3(zdepth*40.) + vec3(0., 0.5, 1.));
         if (zdepth == 0.){
             color = vec3(1., 0., 0.);
         }
+        if (iters == 1) {
+            color = vec3(0., 0., 1.);
+        }
         if (parentIdx < 0) {
-            color = vec3(0., 1., 0.);
+            //color = vec3(0., 1., 0.);
         }
 
-        if (hitmat != MATERIAL_SKY) {
+        if (true /* HACK: always write points */ || hitmat != MATERIAL_SKY) {
             int myPointOffset = atomicAdd(currentWriteOffset, 1);
             myPointOffset %= pointBufferMaxElements;
 
@@ -496,6 +597,6 @@ void main() {
                 }
             }
         }
-    } while (nextRayIndex < jumpBufferMaxElements);
+    }
 }
 
