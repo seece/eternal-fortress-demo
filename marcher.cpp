@@ -700,6 +700,7 @@ int main() {
 		bindBuffer("colorBuffer", colorBuffer);
 		bindImage("edgebuffer", 0, edgebuffer, GL_READ_WRITE, GL_R8); // TODO should be just GL_WRITE
 		bindBuffer("sampleWeightBuffer", sampleWeightBuffer);
+		//bindBuffer("jumpbuffer", jumpbuffer);
 		bindBuffer("cameraArray", cameraData);
 		glDrawArrays(GL_TRIANGLES, 0, 3);
 

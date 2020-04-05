@@ -261,10 +261,9 @@ float march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int num_i
     for (i = 0; i < num_iters; i++) {
         float d = scene(ro + t * rd, mat);
 
-        float coneWorldRadius = PIXEL_RADIUS + (t * PIXEL_RADIUS) / NEAR_PLANE;
+        float coneWorldRadius = PIXEL_RADIUS * ((t + PROJECTION_PLANE_DIST) / PROJECTION_PLANE_DIST);
 
         if (d <= coneWorldRadius) {
-            // In depth rays we write the earlier, "safe", z value to the buffer.
             material = mandelbox_material(ro + t * rd);
             break;
         }
