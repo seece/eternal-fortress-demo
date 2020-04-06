@@ -201,6 +201,7 @@ int main() {
 	Buffer pointBuffer;
 	Buffer colorBuffer, sampleWeightBuffer;
 	Buffer jumpbuffer;
+	Buffer radiusbuffer;
 	Buffer debugBuffer;
 
 	//Framebuffer fbo;
@@ -233,6 +234,7 @@ int main() {
 	
 	int jumpBufferMaxElements = dim2nodecount(max(screenw, screenh));
 	glNamedBufferStorage(jumpbuffer, jumpBufferMaxElements * sizeof(float), NULL, 0);
+	glNamedBufferStorage(radiusbuffer, jumpBufferMaxElements * sizeof(float), NULL, 0);
 
 	int zero = 0;
 	glClearNamedBufferData(pointBufferHeader, GL_R32I, GL_RED_INTEGER, GL_INT, &zero);
@@ -263,7 +265,7 @@ int main() {
 		TimeStamp start;
 		float secs = getTime(); //fmod(frame / 60.f, 2.0) + 21.;
 		secs = 0.;
-		float futureInterval = 2. / 60.f;
+		float futureInterval = 0. / 60.f;
 		cameraPath(secs + futureInterval, cameras[1]);
 		glNamedBufferSubData(cameraData, 0, sizeof(cameras), &cameras);
 		float zeroFloat = 0.f;
@@ -291,6 +293,7 @@ int main() {
 		bindBuffer("pointBufferHeader", pointBufferHeader);
 		bindBuffer("pointBuffer", pointBuffer);
 		bindBuffer("jumpBuffer", jumpbuffer);
+		bindBuffer("radiusBuffer", radiusbuffer);
 		bindBuffer("debugBuffer", debugBuffer);
 		glUniform3i("noiseOffset", rand() % 64, rand() % 64, noiseLayer);
 		bindTexture("noiseTextures", noiseTextures);
@@ -546,9 +549,11 @@ int main() {
 		pointsSplatted = data[1];
 		//printf("pointsSplatted: %d\t(%.3f million)\n", data[1], data[1]/1000000.);
 
-		if (false) {
+		if (true) {
 			std::vector<float> jumpData(jumpBufferMaxElements, 0.f);
+			std::vector<float> radiusData(jumpBufferMaxElements, 0.f);
 			glGetNamedBufferSubData(jumpbuffer, 0, jumpBufferSize, jumpData.data());
+			glGetNamedBufferSubData(radiusbuffer, 0, jumpBufferSize, radiusData.data());
 			for (int i = 0; i < jumpBufferMaxElements; i++) {
 				int b = tobin(i);
 				int start = binto(b);
@@ -571,14 +576,18 @@ int main() {
 				// printf("coord: (%u, %u) of %dx%d, pcoord: (%u, %u)\n", coord.x, coord.y, dim, dim, pcoord.x, pcoord.y);
 				assert(coord.x / 2 == pcoord.x);
 				assert(coord.y / 2 == pcoord.y);
-				
 
 				float myz = jumpData[i];
 				float parentz = jumpData[parent];
-				if (myz < parentz) {
-					//printf("z[%d] %f < z[%d] %f!\n", i, myz, parent, parentz);
-					//puts("fail");
+				float myRadius = radiusData[i];
+				float parentRadius = radiusData[parent];
+				if (i > 0 && myRadius != .5f*parentRadius) {
+					puts("fail");
 				}
+				/*if (myz < parentz) {
+					printf("z[%d] %f < z[%d] %f!\n", i, myz, parent, parentz);
+					puts("fail");
+				}*/
 			}
 		}
 
@@ -616,6 +625,7 @@ int main() {
 					layout(std430) buffer colorBuffer { uint colors[]; };
 					layout(std430) buffer sampleWeightBuffer { uint sampleWeights[]; };
 					layout(r8) uniform image2D edgebuffer;
+					layout(std430) buffer jumpBuffer { float jumps[]; };
 
 					out vec4 outColor;
 					uniform ivec2 screenSize;
@@ -642,6 +652,89 @@ int main() {
 					{
 						return texelFetch(noiseTextures,
 							ivec3((coord.x + noiseOffset.x) % 64, (coord.y + noiseOffset.y) % 64, noiseOffset.z), 0).rgb;
+					}
+
+					// Maps a ray index "i" into a bin index.
+					int tobin(int i)
+					{
+						return findMSB(3 * i + 1) >> 1;
+					}
+
+					// Maps a bin index into a starting ray index. Inverse of "tobin(i)."
+					int binto(int b)
+					{
+						// Computes (4**b - 1) / 3
+						// FIXME: replace with a lookup table
+						int product = 1;
+						for (int i = 0; i < b; i++)
+							product *= 4;
+						return (product - 1) / 3;
+					}
+
+					uint z2x_1(uint x)
+					{
+						x = x & 0x55555555;
+						x = (x | (x >> 1)) & 0x33333333;
+						x = (x | (x >> 2)) & 0x0F0F0F0F;
+						x = (x | (x >> 4)) & 0x00FF00FF;
+						x = (x | (x >> 8)) & 0x0000FFFF;
+						return x;
+					}
+
+					// Maps 32-bit Z-order index into 16-bit (x, y)
+					uvec2 z2xy(uint z)
+					{
+						return uvec2(z2x_1(z), z2x_1(z >> 1));
+					}
+
+					/**
+					* Interleave lower 16 bits of x and y, so the bits of x
+					* are in the even positions and bits from y in the odd;
+					* z gets the resulting 32-bit Morton Number.
+					* x and y must initially be less than 65536.
+					*
+					* Source: http://graphics.stanford.edu/~seander/bithacks.html
+					*/
+					uint xy2z(uint x, uint y) {
+						uint B[] = { 0x55555555, 0x33333333, 0x0F0F0F0F, 0x00FF00FF };
+						uint S[] = { 1, 2, 4, 8 };
+
+						x = (x | (x << S[3])) & B[3];
+						x = (x | (x << S[2])) & B[2];
+						x = (x | (x << S[1])) & B[1];
+						x = (x | (x << S[0])) & B[0];
+
+						y = (y | (y << S[3])) & B[3];
+						y = (y | (y << S[2])) & B[2];
+						y = (y | (y << S[1])) & B[1];
+						y = (y | (y << S[0])) & B[0];
+
+						//uint z = x | (y << 1);
+						return x | (y << 1);
+					}
+
+					vec2 i2ray(int i, out ivec2 squareCoord, out int parentIdx, out int sideLength)
+					{
+						int b = tobin(i);
+						int start = binto(b);
+						int z = i - start;
+						uvec2 coord = z2xy(uint(z));
+						int dim = 1 << b;
+						int size = dim * dim;
+
+						int parent_size = size >> 2; // (2 << (b-1));
+						int parent = int(start - parent_size) + (z / 4);
+
+						float margin = 1.0 / float(2 * dim);
+						float step = (1.0 - 1. / float(dim)) / float(dim);
+
+						squareCoord = ivec2(coord + vec2(.5));
+						parentIdx = parent;
+						sideLength = dim;
+
+						vec2 uv = vec2(margin) + step * vec2(coord);
+
+						return uv;
 					}
 
 					void main() {
@@ -673,6 +766,38 @@ int main() {
 						vec3 skyColor = vec3(0., 0.5, 1.);
 						vec3 c = mix(skyColor, color, alpha);
 
+						if (true) {
+							int bin = 5;
+							int start = binto(bin);
+
+							int dim = 1 << bin;
+
+							uvec2 pos = uvec2(
+								uint(.5 + (gl_FragCoord.x) / (screenSize.x / dim)),
+								uint(.5 + (gl_FragCoord.y) / (screenSize.y / dim))
+							);
+							uint z = xy2z(pos.x, pos.y);
+							uint ind = start + z;
+
+							int parent_start = binto(bin - 1);
+							int parent_dim = 1 << (bin - 1);
+							uvec2 parent_pos = uvec2(
+								uint(.5 + (gl_FragCoord.x) / (screenSize.x / parent_dim)),
+								uint(.5 + (gl_FragCoord.y) / (screenSize.y / parent_dim))
+							);
+							uint parent_z = xy2z(parent_pos.x, parent_pos.y);
+							uint parent_ind = parent_start + parent_z;
+
+							float d = jumps[ind];
+							float dp= jumps[parent_ind];
+							float diff = d - dp; // should be positive
+							if (diff >= 0) {
+								c.gb *= vec2(pow(d / 5., 5.));
+							} else {
+								c.r = 1.;
+							}
+						}
+
 						outColor = vec4(linearToSRGB(c.rgb), 1.);
 						//outColor= vec4(vec3(alpha == 0.), 1.);
 
@@ -700,7 +825,7 @@ int main() {
 		bindBuffer("colorBuffer", colorBuffer);
 		bindImage("edgebuffer", 0, edgebuffer, GL_READ_WRITE, GL_R8); // TODO should be just GL_WRITE
 		bindBuffer("sampleWeightBuffer", sampleWeightBuffer);
-		//bindBuffer("jumpbuffer", jumpbuffer);
+		bindBuffer("jumpBuffer", jumpbuffer);
 		bindBuffer("cameraArray", cameraData);
 		glDrawArrays(GL_TRIANGLES, 0, 3);
 

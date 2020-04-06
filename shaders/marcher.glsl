@@ -81,6 +81,10 @@ layout(std430) buffer jumpBuffer {
     float jumps[];
 };
 
+layout(std430) buffer radiusBuffer {
+    float radiuses[];
+};
+
 layout(std430) buffer debugBuffer {
     int debug_i;
     int debug_parent;
@@ -145,19 +149,19 @@ float mandelbox(vec3 position, int iters=7) {
     return d;
 }
 
-float scene_old(vec3 p, out int material, float pixelConeSize=1.) {
+float scene_fractal(vec3 p, out int material, float pixelConeSize=1.) {
 	material = MATERIAL_OTHER;
 	return mandelbox(p, 9);
 }
 
 float scene(vec3 p, out int material, float pixelConeSize=1.) {
 	material = MATERIAL_OTHER;
-    float d = length(p + 0.25*vec3(cos(secs*1.), 0., 0.)) - 1.;
+    float d = length(p) - 1.;
     return d;
 }
 
 vec3 evalnormal(vec3 p) {
-	vec2 e=vec2(1e-3, 0.f); //vec2 e=vec2(1e-5, 0.f);
+	vec2 e=vec2(1e-5, 0.f);
 	int m;
 	return normalize(vec3(
 				scene(p + e.xyy,m) - scene(p - e.xyy,m),
@@ -225,7 +229,7 @@ float depth_march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int
     for (i = 0; i < num_iters; i++) {
         float d = scene(ro + t * rd, mat);
 
-        float coneWorldRadius = PIXEL_RADIUS * ((t + PROJECTION_PLANE_DIST) / PROJECTION_PLANE_DIST);
+        float coneWorldRadius = PIXEL_RADIUS * (t/PROJECTION_PLANE_DIST + PROJECTION_PLANE_DIST);
 
         if (d <= coneWorldRadius) {
             // In depth rays we write the earlier, "safe", z value to the buffer.
@@ -251,7 +255,7 @@ float depth_march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int
     return t;
 }
 
-float march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int num_iters, out int out_iters, float start_t=0., float end_t=20.) {
+float simple_march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int num_iters, out int out_iters, float start_t=0., float end_t=20.) {
     vec3 ro = p;
     int i;
     float t = start_t;
@@ -286,11 +290,11 @@ float march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int num_i
 }
 
 // Raymarching loop based on techniques of Keinert et al. "Enhanced Sphere Tracing", 2014.
-float march_old(inout vec3 p, vec3 rd, out int material, out vec2 restart, int num_iters, out int out_iters, float maxDist=20.) {
+float march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int num_iters, out int out_iters, float start_t=0., float end_t=20.) {
     vec3 ro = p;
     int i;
     float omega = 1.3;
-    float t = 0.;
+    float t = start_t;
     float restart_t = t;
     float restart_error = 0.;
     float candidate_error = 1e9;
@@ -311,7 +315,8 @@ float march_old(inout vec3 p, vec3 rd, out int material, out vec2 restart, int n
             step = d * omega;
         }
 
-        float error = d / t; // FIXME: should be d/(t+1)? division of zero here
+        // Worst case distance to surface in screen space.
+        float error = d / (t + PROJECTION_PLANE_DIST);
 
         if (d > last_d && error < restart_error) {
             restart_t = t;
@@ -325,10 +330,8 @@ float march_old(inout vec3 p, vec3 rd, out int material, out vec2 restart, int n
             candidate_error = error;
         }
 
-        //if (!sorFail && error < 4.*PIXEL_RADIUS || t >= maxDist) {
-        if (!sorFail && error < PIXEL_RADIUS || t >= maxDist) {
+        if (!sorFail && error < 2. * PIXEL_RADIUS || t >= end_t) {
             material = mandelbox_material(ro + t * rd);
-            //material = mat;
             break;
         }
 
@@ -338,7 +341,7 @@ float march_old(inout vec3 p, vec3 rd, out int material, out vec2 restart, int n
     restart = vec2(0, PIXEL_RADIUS);
     out_iters = i;
 
-    if (t >= maxDist) {
+    if (t >= end_t) {
         material = MATERIAL_SKY;
         t = MAX_DISTANCE;
         return t;
@@ -435,6 +438,8 @@ vec2 i2ray(int i, out ivec2 squareCoord, out int parentIdx, out int sideLength)
     sideLength = dim;
 
     vec2 uv = vec2(margin) + step * vec2(coord);
+    //vec2 uv = vec2(coord) / vec2(dim);
+    //vec2 uv = vec2(coord) / vec2(dim);
 
     if (i == 599) {
         debug_i = i;
@@ -483,40 +488,45 @@ void main() {
         }
 
         float parentDepth = jumps[parentIdx];
+        parentDepth = 0.; // DEBUG HACK
+
+        // Parent was missed all the rays so bail out.
+        /* if (parentDepth >= MAX_DISTANCE) {
+            jumps[myIdx] = parentDepth;
+            continue;
+        } */
 
         CameraParams cam = cameras[1];
         vec3 p, dir;
         getCameraProjection(cam, uv, p, dir);
 
         //PIXEL_RADIUS = .5 * length(cameras[1].right) / res.x;
-        PIXEL_RADIUS = sqrt(2.) * .5 * length(cam.right) / float(sideLength);
-        PROJECTION_PLANE_DIST = length(p - cam.pos);
+        vec3 rp = p - cam.pos;
+        PROJECTION_PLANE_DIST = length(rp);
         NEAR_PLANE = length(cam.dir);
+        PIXEL_RADIUS = sqrt(2.) * .5 * length(cam.right) / float(sideLength);
 
         int hitmat = MATERIAL_SKY;
         vec2 restart;
         int iters=0;
-        float zdepth = parentDepth;
+        float zdepth = -1.;
 
         bool isLowestLevel = sideLength >= max(res.x, res.y);
 
         if (isLowestLevel) {
             zdepth = march(p, dir, hitmat, restart, 400, iters, parentDepth);
         } else {
-            zdepth = depth_march(p, dir, hitmat, restart, 100, iters, parentDepth);
+            zdepth = depth_march(p, dir, hitmat, restart, 400, iters, parentDepth);
         }
 
-        if (myIdx == 0) {
+        if (myIdx == 2) {
             debug_pixelRadius = PIXEL_RADIUS;
             debug_zdepth = zdepth;
             debug_parentDepth = parentDepth;
         }
 
-        // if (sideLength >= 256) {
-        //     zdepth = parentDepth;
-        // }
-
-        jumps[myIdx] = zdepth + 1e-6;
+        jumps[myIdx] = zdepth;
+        radiuses[myIdx] = PIXEL_RADIUS;
 
         if (!isLowestLevel) {
             continue;
@@ -562,23 +572,21 @@ void main() {
                 color = clamp(color, vec3(0.), vec3(10.));
                 //color = vec3(0.5)+.5*cos( 10*vec3(iters)/600.  + vec3(0., 0.5, 1.));
             } else {
-                color = vec3(normal); // * vec3(0., 1., 0.);
+                color = vec3(pow(zdepth/10., 5.), 0., 0.); // * vec3(0., 1., 0.);
             }
         }
 
-        color = vec3(pow(zdepth/10., 4.));
+        //color = vec3(iters/800.);
+        //color = vec3(pow(zdepth/10., 4.));
         //color = vec3(.0)+.5*sin(vec3(zdepth*40.) + vec3(0., 0.5, 1.));
         if (zdepth == 0.){
             color = vec3(1., 0., 0.);
         }
-        if (iters == 1) {
-            color = vec3(0., 0., 1.);
-        }
-        if (parentIdx < 0) {
-            //color = vec3(0., 1., 0.);
+        if (parentDepth > 0 && zdepth < parentDepth) {
+            color = vec3(0., 1., 1.);
         }
 
-        if (true /* HACK: always write points */ || hitmat != MATERIAL_SKY) {
+        if (true /* DEBUG HACK */ || hitmat != MATERIAL_SKY) {
             int myPointOffset = atomicAdd(currentWriteOffset, 1);
             myPointOffset %= pointBufferMaxElements;
 
