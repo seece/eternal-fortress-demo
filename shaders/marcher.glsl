@@ -81,6 +81,10 @@ layout(std430) buffer jumpBuffer {
     float jumps[];
 };
 
+layout(std430) buffer uvBuffer {
+    vec2 debug_uvs[];
+};
+
 layout(std430) buffer radiusBuffer {
     float radiuses[];
 };
@@ -95,11 +99,27 @@ layout(std430) buffer debugBuffer {
     float debug_pixelRadius;
     float debug_zdepth;
     float debug_parentDepth;
+    float debug_parent_t;
+    float debug_child_t;
+    float debug_nearPlane;
+    float debug_projPlaneDist;
+    float debug_parentUVx;
+    float debug_parentUVy;
+    float debug_childUVx;
+    float debug_childUVy;
+};
+
+layout(std430) buffer stepBuffer {
+    float debug_steps[];
 };
 
 float PIXEL_RADIUS;
 float PROJECTION_PLANE_DIST;
 float NEAR_PLANE;
+
+const int PARENT_INDEX  = 232;
+const int CHILD_INDEX = 232*4+2;
+int globalMyIdx;
 
 // This factor how many pixel radiuses of screen space error do we allow
 // in the "near geometry snapping" at the end of "march" loop. Without it
@@ -228,8 +248,21 @@ float depth_march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int
 
     for (i = 0; i < num_iters; i++) {
         float d = scene(ro + t * rd, mat);
+        float coneWorldRadius = PIXEL_RADIUS * ((t+PROJECTION_PLANE_DIST) / PROJECTION_PLANE_DIST);
 
-        float coneWorldRadius = PIXEL_RADIUS * (t/PROJECTION_PLANE_DIST + PROJECTION_PLANE_DIST);
+        if (globalMyIdx == PARENT_INDEX) {
+            debug_steps[4*i] = t;
+            debug_steps[4*i + 1] = d;
+            debug_steps[4*i + 2] = coneWorldRadius;
+            debug_steps[4*i + 3] = PIXEL_RADIUS;
+        }
+
+        if (globalMyIdx == CHILD_INDEX) {
+            debug_steps[1000*4 + 4*i] = t;
+            debug_steps[1000*4 + 4*i + 1] = d;
+            debug_steps[1000*4 + 4*i + 2] = coneWorldRadius;
+            debug_steps[1000*4 + 4*i + 3] = PIXEL_RADIUS;
+        }
 
         if (d <= coneWorldRadius) {
             // In depth rays we write the earlier, "safe", z value to the buffer.
@@ -249,8 +282,17 @@ float depth_march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int
 
     if (t >= end_t) {
         material = MATERIAL_SKY;
-        return MAX_DISTANCE;
+        t = MAX_DISTANCE;
     }
+
+    if (globalMyIdx == PARENT_INDEX) {
+        debug_parent_t = t;
+    }
+
+    if (globalMyIdx == CHILD_INDEX) {
+        debug_child_t = t;
+    }
+
 
     return t;
 }
@@ -265,9 +307,10 @@ float simple_march(inout vec3 p, vec3 rd, out int material, out vec2 restart, in
     for (i = 0; i < num_iters; i++) {
         float d = scene(ro + t * rd, mat);
 
-        float coneWorldRadius = PIXEL_RADIUS * ((t + PROJECTION_PLANE_DIST) / PROJECTION_PLANE_DIST);
+        //float coneWorldRadius = PIXEL_RADIUS * ((t + PROJECTION_PLANE_DIST) / PROJECTION_PLANE_DIST);
 
-        if (d <= coneWorldRadius) {
+        //if (d <= coneWorldRadius) {
+        if (d < 1e-5) {
             material = mandelbox_material(ro + t * rd);
             break;
         }
@@ -424,27 +467,28 @@ vec2 i2ray(int i, out ivec2 squareCoord, out int parentIdx, out int sideLength)
     int start = binto(b);
     int z = i - start;
     uvec2 coord = z2xy(uint(z));
-    int dim = 1 << b;
-    int size = dim * dim;
+    int idim = 1 << b;
+    int size = idim * idim;
+    float dim = float(idim);
 
     int parent_size = size >> 2; // (2 << (b-1));
     int parent = int(start - parent_size) + (z/4);
 
-    float margin = 1.0 / float(2*dim);
-    float step = (1.0 - 1. / float(dim)) / float(dim);
+    float margin = 1.0 / (dim);
+    float step = (1.0 - 1. / dim) / dim;
 
     squareCoord = ivec2(coord + vec2(.5));
     parentIdx = parent;
-    sideLength = dim;
+    sideLength = idim;
 
-    vec2 uv = vec2(margin) + step * vec2(coord);
-    //vec2 uv = vec2(coord) / vec2(dim);
+    //vec2 uv = vec2(margin) + step * vec2(coord);
+    vec2 uv = vec2(0.5/dim) + coord/vec2(dim);
     //vec2 uv = vec2(coord) / vec2(dim);
 
     if (i == 599) {
         debug_i = i;
         debug_parent = parent;
-        debug_size = dim;
+        debug_size = idim;
         debug_b = b;
         debug_start = start;
         debug_parent_size = parent_size;
@@ -464,6 +508,7 @@ void main() {
         int myIdx = atomicAdd(nextRayIndex, 1);
         if (myIdx >= jumpBufferMaxElements)
             return;
+        globalMyIdx = myIdx;
 
         int parentIdx = -2, sideLength = -1;
         ivec2 squareCoord;
@@ -504,7 +549,27 @@ void main() {
         vec3 rp = p - cam.pos;
         PROJECTION_PLANE_DIST = length(rp);
         NEAR_PLANE = length(cam.dir);
-        PIXEL_RADIUS = sqrt(2.) * .5 * length(cam.right) / float(sideLength);
+        PIXEL_RADIUS = 2. * sqrt(2.) * .5 * length(cam.right) / float(sideLength);
+        /*
+        float one_pixel_radius = sqrt(2.) * .5 * length(cam.right) / float(sideLength);
+        vec3 corner = p - (cam.right + cam.up) / float(sideLength); // half a pixel bias
+        float angle = acos(dot(normalize(corner), rp/PROJECTION_PLANE_DIST));
+        PIXEL_RADIUS = .1 * sin(angle) * PROJECTION_PLANE_DIST;
+        */
+
+        /*
+        {
+            vec3 p2, dir2;
+            getCameraProjection(cam, uv + vec2(1) / sideLength, p2, dir2);
+            vec3 a = p - cam.pos;
+            vec3 b = p2 - cam.pos;
+            float cosine = dot(normalize(a), normalize(b));
+            float angle = acos(cosine);
+            float pixelSideLengthWorld = length(cam.right) / float(sideLength);
+            float tp = length(a);
+            PIXEL_RADIUS = 2. * pixelSideLengthWorld * sin(angle) * tp;
+        }
+        */
 
         int hitmat = MATERIAL_SKY;
         vec2 restart;
@@ -519,14 +584,24 @@ void main() {
             zdepth = depth_march(p, dir, hitmat, restart, 400, iters, parentDepth);
         }
 
-        if (myIdx == 2) {
+        if (myIdx == CHILD_INDEX) {
             debug_pixelRadius = PIXEL_RADIUS;
+            debug_nearPlane = NEAR_PLANE;
+            debug_projPlaneDist = PROJECTION_PLANE_DIST;
             debug_zdepth = zdepth;
             debug_parentDepth = parentDepth;
+            debug_childUVx = uv.x;
+            debug_childUVy = uv.y;
+        }
+
+        if (myIdx == PARENT_INDEX) {
+            debug_parentUVx = uv.x;
+            debug_parentUVy = uv.y;
         }
 
         jumps[myIdx] = zdepth;
         radiuses[myIdx] = PIXEL_RADIUS;
+        debug_uvs[myIdx] = uv;
 
         if (!isLowestLevel) {
             continue;

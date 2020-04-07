@@ -201,8 +201,10 @@ int main() {
 	Buffer pointBuffer;
 	Buffer colorBuffer, sampleWeightBuffer;
 	Buffer jumpbuffer;
+	Buffer uvbuffer;
 	Buffer radiusbuffer;
 	Buffer debugBuffer;
+	Buffer stepBuffer;
 
 	//Framebuffer fbo;
 	//glBindFramebuffer(GL_FRAMEBUFFER, fbo);
@@ -231,15 +233,19 @@ int main() {
 	glNamedBufferStorage(colorBuffer, screenw * screenh * 3 * sizeof(int), NULL, 0);
 	glNamedBufferStorage(sampleWeightBuffer, screenw * screenh * sizeof(int), NULL, 0);
 	glNamedBufferStorage(debugBuffer, 1024 * sizeof(int), NULL, 0);
+	glNamedBufferStorage(stepBuffer, 50000 * sizeof(float), NULL, 0);
 	
 	int jumpBufferMaxElements = dim2nodecount(max(screenw, screenh));
 	glNamedBufferStorage(jumpbuffer, jumpBufferMaxElements * sizeof(float), NULL, 0);
 	glNamedBufferStorage(radiusbuffer, jumpBufferMaxElements * sizeof(float), NULL, 0);
+	glNamedBufferStorage(uvbuffer, 2 * jumpBufferMaxElements * sizeof(float), NULL, 0);
 
 	int zero = 0;
 	glClearNamedBufferData(pointBufferHeader, GL_R32I, GL_RED_INTEGER, GL_INT, &zero);
 	glClearNamedBufferData(pointBuffer, GL_R32I, GL_RED_INTEGER, GL_INT, &zero);
 	glClearNamedBufferData(debugBuffer, GL_R32I, GL_RED_INTEGER, GL_INT, &zero);
+	float minusone = -1.f;
+	glClearNamedBufferData(stepBuffer, GL_R32F, GL_RED, GL_FLOAT, &minusone);
 
 	int thousand = 1000;
 	int hundred = 100;
@@ -293,8 +299,10 @@ int main() {
 		bindBuffer("pointBufferHeader", pointBufferHeader);
 		bindBuffer("pointBuffer", pointBuffer);
 		bindBuffer("jumpBuffer", jumpbuffer);
+		bindBuffer("uvBuffer", uvbuffer);
 		bindBuffer("radiusBuffer", radiusbuffer);
 		bindBuffer("debugBuffer", debugBuffer);
+		bindBuffer("stepBuffer", stepBuffer);
 		glUniform3i("noiseOffset", rand() % 64, rand() % 64, noiseLayer);
 		bindTexture("noiseTextures", noiseTextures);
 		//bindImage("gbuffer", 0, gbuffer, GL_WRITE_ONLY, GL_RGBA32F);
@@ -534,6 +542,14 @@ int main() {
 			float pixelRadius;
 			float zdepth;
 			float parentDepth;
+			float parent_t;
+			float child_t;
+            float nearPlane;
+            float projPlaneDist;
+			float parentUVx;
+			float parentUVy;
+			float childUVx;
+			float childUVy;
 		};
 		DebugData debugData = {};
 		glGetNamedBufferSubData(debugBuffer, 0, sizeof(DebugData), &debugData);
@@ -542,14 +558,35 @@ int main() {
 			debugData.i, debugData.parent, debugData.size, debugData.b, debugData.start,
 			debugData.parent_size,
 			debugData.pixelRadius, debugData.zdepth, debugData.parentDepth);
+		printf("nearPlane: %f, projPlaneDist: %f\n", debugData.nearPlane, debugData.projPlaneDist);
+		printf("parent UV: (%f, %f), child UV: (%f, %f)\n",
+			debugData.parentUVx, debugData.parentUVy, debugData.childUVx, debugData.childUVy);
 
 		int data[2];
 		glGetNamedBufferSubData(pointBufferHeader, 0, 8, data);
 		//printf("currentWriteOffset: %d\n", data[0]);
 		pointsSplatted = data[1];
 		//printf("pointsSplatted: %d\t(%.3f million)\n", data[1], data[1]/1000000.);
+		if (false) {
+			GLint64 size = -1;
+			glGetNamedBufferParameteri64v(stepBuffer, GL_BUFFER_SIZE, &size);
+			std::vector<float> steps(size/sizeof(float), -1.f);
+			glGetNamedBufferSubData(stepBuffer, 0, steps.size(), steps.data());
+			int i = 0;
+			while (steps[4*i] != -1.f) {
+				printf("parent step [%d], t=%f\td=%f, cone: %f, pix: %f\n", i, steps[4*i], steps[4*i+1], steps[4 * i + 2], steps[4 * i + 3]);
+				i++;
+			}
+			i = 1000;
+			while (steps[4*i] != -1.f) {
+				printf("child step [%d], t=%f\td=%f, cone: %f, pix: %f\n", i, steps[4 * i], steps[4 * i + 1], steps[4 * i + 2], steps[4 * i + 3]);
+				i++;
+			}
 
-		if (true) {
+			printf("parent vs child final t: %f vs %f\n", debugData.parent_t, debugData.child_t);
+		}
+
+		if (false) {
 			std::vector<float> jumpData(jumpBufferMaxElements, 0.f);
 			std::vector<float> radiusData(jumpBufferMaxElements, 0.f);
 			glGetNamedBufferSubData(jumpbuffer, 0, jumpBufferSize, jumpData.data());
@@ -584,10 +621,10 @@ int main() {
 				if (i > 0 && myRadius != .5f*parentRadius) {
 					puts("fail");
 				}
-				/*if (myz < parentz) {
+				if (myz < parentz) {
 					printf("z[%d] %f < z[%d] %f!\n", i, myz, parent, parentz);
 					puts("fail");
-				}*/
+				}
 			}
 		}
 
@@ -626,6 +663,7 @@ int main() {
 					layout(std430) buffer sampleWeightBuffer { uint sampleWeights[]; };
 					layout(r8) uniform image2D edgebuffer;
 					layout(std430) buffer jumpBuffer { float jumps[]; };
+                    layout(std430) buffer uvBuffer { vec2 debug_uvs[]; };
 
 					out vec4 outColor;
 					uniform ivec2 screenSize;
@@ -739,6 +777,7 @@ int main() {
 
 					void main() {
 						int pixelIdx = screenSize.x * int(gl_FragCoord.y) + int(gl_FragCoord.x);
+                        vec2 pixelUV = (gl_FragCoord.xy - vec2(.5)) / screenSize.xy;
 
 						uvec3 icolor = uvec3(
 							colors[3 * pixelIdx + 0],
@@ -767,35 +806,68 @@ int main() {
 						vec3 c = mix(skyColor, color, alpha);
 
 						if (true) {
-							int bin = 5;
+							int bin = 4;
 							int start = binto(bin);
 
 							int dim = 1 << bin;
 
-							uvec2 pos = uvec2(
-								uint(.5 + (gl_FragCoord.x) / (screenSize.x / dim)),
-								uint(.5 + (gl_FragCoord.y) / (screenSize.y / dim))
+							vec2 fpos = vec2(
+								((gl_FragCoord.x) / (screenSize.x / dim)),
+								((gl_FragCoord.y) / (screenSize.y / dim))
 							);
+							uvec2 pos = uvec2(fpos);
+							vec2 border = fract(fpos);
+
 							uint z = xy2z(pos.x, pos.y);
 							uint ind = start + z;
 
+
 							int parent_start = binto(bin - 1);
 							int parent_dim = 1 << (bin - 1);
-							uvec2 parent_pos = uvec2(
-								uint(.5 + (gl_FragCoord.x) / (screenSize.x / parent_dim)),
-								uint(.5 + (gl_FragCoord.y) / (screenSize.y / parent_dim))
+
+							vec2 parent_fpos = vec2(
+								(gl_FragCoord.x) / (screenSize.x / parent_dim),
+								(gl_FragCoord.y) / (screenSize.y / parent_dim)
 							);
+
+							vec2 parent_border = fract(parent_fpos);
+
+							uvec2 parent_pos = uvec2(parent_fpos);
 							uint parent_z = xy2z(parent_pos.x, parent_pos.y);
 							uint parent_ind = parent_start + parent_z;
+
+							// parent_ind = 232
+							//
+							if (ind == 232*4+2) {
+							//if (parent_ind == 232) {
+								outColor = vec4(1., 0., 1., 1.);
+								return;
+							}
 
 							float d = jumps[ind];
 							float dp= jumps[parent_ind];
 							float diff = d - dp; // should be positive
-							if (diff >= 0) {
-								c.gb *= vec2(pow(d / 5., 5.));
+
+							if (diff >= 0.) {
+								//c.gb *= vec2(pow(d / 5., 5.));
+								c.g *= pow(d / 5., 5.) * pow(border.x * border.y, .2);
 							} else {
-								c.r = 1.;
+								c.r = pow(border.x * border.y, .5);
 							}
+
+                            vec2 uv = debug_uvs[ind];
+                            float dist = length(pixelUV - uv);
+                            if (dist < 0.003) {
+                                c.rgb = vec3(0., pow(0.0002/dist, 1.5), 0.);
+                            }
+
+                            if (d == 0.)
+                            {
+                                //c.rgb = vec3(1., 0., 0.);
+                            }
+
+                            //c.rgb = vec3(pow(d / 5., 5.));
+                            //c.rgb = vec3(parent_fpos/80., 0.);
 						}
 
 						outColor = vec4(linearToSRGB(c.rgb), 1.);
@@ -826,6 +898,7 @@ int main() {
 		bindImage("edgebuffer", 0, edgebuffer, GL_READ_WRITE, GL_R8); // TODO should be just GL_WRITE
 		bindBuffer("sampleWeightBuffer", sampleWeightBuffer);
 		bindBuffer("jumpBuffer", jumpbuffer);
+		bindBuffer("uvBuffer", uvbuffer);
 		bindBuffer("cameraArray", cameraData);
 		glDrawArrays(GL_TRIANGLES, 0, 3);
 
