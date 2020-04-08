@@ -208,7 +208,9 @@ float depth_march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int
         }
 
         last_t = t;
-        t += d;
+        //t = (t + d) * STEP_FACTOR;
+        t += (d - coneWorldRadius);
+        //t += (d - coneWorldRadius);
 
         if (t >= end_t) {
             break;
