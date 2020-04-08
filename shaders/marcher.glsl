@@ -117,8 +117,8 @@ float PIXEL_RADIUS;
 float PROJECTION_PLANE_DIST;
 float NEAR_PLANE;
 
-const int PARENT_INDEX  = 232;
-const int CHILD_INDEX = 232*4+2;
+const int PARENT_INDEX  = 16;
+const int CHILD_INDEX = 112;
 int globalMyIdx;
 
 // This factor how many pixel radiuses of screen space error do we allow
@@ -248,7 +248,7 @@ float depth_march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int
 
     for (i = 0; i < num_iters; i++) {
         float d = scene(ro + t * rd, mat);
-        float coneWorldRadius = PIXEL_RADIUS * ((t+PROJECTION_PLANE_DIST) / PROJECTION_PLANE_DIST);
+        float coneWorldRadius = PIXEL_RADIUS * (t+PROJECTION_PLANE_DIST) / PROJECTION_PLANE_DIST;
 
         if (globalMyIdx == PARENT_INDEX) {
             debug_steps[4*i] = t;
@@ -549,12 +549,14 @@ void main() {
         vec3 rp = p - cam.pos;
         PROJECTION_PLANE_DIST = length(rp);
         NEAR_PLANE = length(cam.dir);
-        PIXEL_RADIUS = 2. * sqrt(2.) * .5 * length(cam.right) / float(sideLength);
+        //PIXEL_RADIUS = sqrt(2.) * .5 * length(cam.right) / float(sideLength);
+        PIXEL_RADIUS = sqrt(2.) * length(cam.right) / float(sideLength);
+        //PIXEL_RADIUS += 0.2 * (1./sideLength);
         /*
-        float one_pixel_radius = sqrt(2.) * .5 * length(cam.right) / float(sideLength);
+        float one_pixel_radius = sqrt(2.) * length(cam.right) / float(sideLength);
         vec3 corner = p - (cam.right + cam.up) / float(sideLength); // half a pixel bias
         float angle = acos(dot(normalize(corner), rp/PROJECTION_PLANE_DIST));
-        PIXEL_RADIUS = .1 * sin(angle) * PROJECTION_PLANE_DIST;
+        PIXEL_RADIUS = sin(angle) * PROJECTION_PLANE_DIST;
         */
 
         /*
@@ -567,7 +569,7 @@ void main() {
             float angle = acos(cosine);
             float pixelSideLengthWorld = length(cam.right) / float(sideLength);
             float tp = length(a);
-            PIXEL_RADIUS = 2. * pixelSideLengthWorld * sin(angle) * tp;
+            PIXEL_RADIUS = pixelSideLengthWorld * sin(angle) * tp;
         }
         */
 
@@ -600,6 +602,7 @@ void main() {
         }
 
         jumps[myIdx] = zdepth;
+        //radiuses[myIdx] = (PIXEL_RADIUS / (2.* length(cam.right)));
         radiuses[myIdx] = PIXEL_RADIUS;
         debug_uvs[myIdx] = uv;
 

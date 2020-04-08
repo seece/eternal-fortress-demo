@@ -663,6 +663,7 @@ int main() {
 					layout(std430) buffer sampleWeightBuffer { uint sampleWeights[]; };
 					layout(r8) uniform image2D edgebuffer;
 					layout(std430) buffer jumpBuffer { float jumps[]; };
+					layout(std430) buffer radiusBuffer { float radiuses[]; };
                     layout(std430) buffer uvBuffer { vec2 debug_uvs[]; };
 
 					out vec4 outColor;
@@ -834,12 +835,12 @@ int main() {
 
 							uvec2 parent_pos = uvec2(parent_fpos);
 							uint parent_z = xy2z(parent_pos.x, parent_pos.y);
-							uint parent_ind = parent_start + parent_z;
+							//uint parent_ind = parent_start + parent_z;
+							uint parent_ind = parent_start + z/4;
 
-							// parent_ind = 232
 							//
-							if (ind == 232*4+2) {
-							//if (parent_ind == 232) {
+							if (ind == 112) {
+							//if (parent_ind == 27) {
 								outColor = vec4(1., 0., 1., 1.);
 								return;
 							}
@@ -852,13 +853,19 @@ int main() {
 								//c.gb *= vec2(pow(d / 5., 5.));
 								c.g *= pow(d / 5., 5.) * pow(border.x * border.y, .2);
 							} else {
-								c.r = pow(border.x * border.y, .5);
+                                c.r = pow(border.x * border.y, .5);
 							}
 
-                            vec2 uv = debug_uvs[ind];
-                            float dist = length(pixelUV - uv);
-                            if (dist < 0.003) {
-                                c.rgb = vec3(0., pow(0.0002/dist, 1.5), 0.);
+                            if (false && (frame/30 % 2 == 0)) {
+                                float uvRadius = radiuses[parent_ind];
+                                vec2 uv = debug_uvs[parent_ind];
+                                float dist = length(pixelUV - uv);
+                                if (dist < uvRadius) {
+                                    c.rg = vec2(pow(0.005/dist, 1.0), 0.);
+                                }
+                                if (dist < uvRadius / sqrt(2.)) {
+                                    c.rg = c.gr;
+                                }
                             }
 
                             if (d == 0.)
@@ -898,6 +905,7 @@ int main() {
 		bindImage("edgebuffer", 0, edgebuffer, GL_READ_WRITE, GL_R8); // TODO should be just GL_WRITE
 		bindBuffer("sampleWeightBuffer", sampleWeightBuffer);
 		bindBuffer("jumpBuffer", jumpbuffer);
+		bindBuffer("radiusBuffer", radiusbuffer);
 		bindBuffer("uvBuffer", uvbuffer);
 		bindBuffer("cameraArray", cameraData);
 		glDrawArrays(GL_TRIANGLES, 0, 3);
