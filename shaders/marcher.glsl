@@ -30,6 +30,7 @@ uniform int frame;
 uniform float secs;
 uniform ivec2 screenSize;
 uniform vec2 screenBoundary;
+uniform vec2 cameraJitter;
 
 layout(r32f) uniform image2D zbuffer;
 layout(r8) uniform image2D edgebuffer;
@@ -112,6 +113,7 @@ layout(std430) buffer stepBuffer {
 
 #define USE_ANALYTIC_CONE_STEP 1
 #define USE_HIT_REFINEMENT 0
+#define USE_TREE 1
 
 // This factor how many pixel radiuses of screen space error do we allow
 // in the "near geometry snapping" at the end of "march" loop. Without it
@@ -331,6 +333,75 @@ float march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int num_i
     return t;
 }
 
+vec3 evalnormal(vec3 p) {
+    vec2 e=vec2(1e-5, 0.f);
+    int m;
+    return normalize(vec3(
+                scene(p + e.xyy,m) - scene(p - e.xyy,m),
+                scene(p + e.yxy,m) - scene(p - e.yxy,m),
+                scene(p + e.yyx,m) - scene(p - e.yyx,m)
+                ));
+}
+
+vec2 shadowMarch(inout vec3 p, vec3 rd, int num_iters, float w, float mint, float maxt) {
+    vec3 ro = p;
+    int i;
+    float omega = 1.3;
+    float t = mint;
+    int mat;
+    float last_d = 0.;
+    float step = 0.;
+    float closest = MAX_DISTANCE;
+
+    for (i = 0; i < num_iters; i++) {
+        float d = scene(ro + t * rd, mat);
+
+        bool sorFail = omega > 1. && (d + last_d) < step;
+        if (sorFail) {
+            step -= omega * step;
+            omega = 1.;
+        } else {
+            step = d * omega;
+        }
+
+        //closest = min(closest, d);
+        closest = min(closest, 0.5+0.5*d/(w*t) );
+
+        last_d = d;
+
+        if (d < 1e-5) {
+            break;
+        }
+
+        if (t >= maxt) {
+            break;
+        }
+
+        t += step;
+    }
+
+    p = ro + t * rd;
+    closest = max(0., closest);
+    //return vec2(t, closest*closest*(3.-2.*closest));
+    return vec2(t, closest);
+}
+float sampleAO(vec3 ro, vec3 rd)
+{
+    const int STEPS = 20;
+    const float step = 0.05;
+    float t = step;
+    int mat=0;
+    float obscurance = 0.;
+
+    for (int i=0; i < STEPS; i++) {
+        float d = scene(ro + t * rd, mat);
+        obscurance += max(0., t - d) / t;
+        t += step;
+    }
+
+    return 1. - obscurance / STEPS;
+}
+
 // Maps a ray index "i" into a bin index.
 int tobin(int i)
 {
@@ -408,7 +479,6 @@ void main() {
     ivec2 res = screenSize;
 
     const int maxRayIndex = res.x * res.y;
-#define USE_TREE 0
 
     while (nextRayIndex < rayIndexBufferMaxElements) {
         int arrayIdx = atomicAdd(nextRayIndex, 1);
@@ -461,7 +531,7 @@ void main() {
 
 #if USE_TREE
         float parentDepth = jumps[parentIdx];
-        parentDepth = 0.; // HACK!!!
+        //parentDepth = 0.; // HACK!!!
         if (parentDepth >= MAX_DISTANCE) {
             jumps[myIdx] = parentDepth;
             continue;
@@ -469,6 +539,15 @@ void main() {
 #else
         float parentDepth = 0.;
 #endif
+
+        bool isLowestLevel = sideLength >= max(res.x, res.y);
+
+        if (isLowestLevel) {
+            vec2 jitter = vec2(rand() - 0.5, rand() - 0.5);
+            jitter /= res;
+            //jitter *= 0.95;
+            uv += jitter;
+        }
 
         vec3 p, dir;
         getCameraProjection(cam, uv, p, dir);
@@ -490,8 +569,6 @@ void main() {
         vec2 restart;
         int iters=0;
         float zdepth = -1.;
-
-        bool isLowestLevel = sideLength >= max(res.x, res.y);
 
         if (isLowestLevel) {
             zdepth = march(p, dir, hitmat, restart, 400, iters, parentDepth);
@@ -525,22 +602,47 @@ void main() {
             continue;
         }
 
-        float distance = length(p - cam.pos); // TODO replace with t+nearplane dist
-
         vec3 color;
         vec3 skyColor = vec3(0., 0.2*abs(dir.y), 0.5 - dir.y);
 
         if (hitmat == MATERIAL_SKY) {
             color = skyColor;
         } else {
-            color = vec3(1., pow(zdepth/10., 5.), 0.); // * vec3(0., 1., 0.);
-            //color = vec3(0., pow(iters/10., 5.), 0.); // * vec3(0., 1., 0.);
+            vec3 normal = evalnormal(p);
+            vec3 to_camera = normalize(cam.pos - p);
+            vec3 to_light = normalize(vec3(-0.5, -1.0, 0.7));
+
+            vec3 shadowRayPos = p + to_camera * 1e-4;
+            const float maxShadowDist = 10.;
+            vec2 shadowResult = shadowMarch(shadowRayPos, to_light, 400, 9e-2, 0.01, maxShadowDist);
+            float sun = min(shadowResult.x, maxShadowDist) / maxShadowDist;
+            //sun = max(0., shadowResult.y - 0.1);
+            //sun = (sun+0.1) * shadowResult.y;
+
+            //float sun = min(1.0, shadowResult.y*1e3);
+            sun = pow(sun, 2.);
+
+            float ambient = sampleAO(p, normal);
+            ambient = pow(ambient, 2.0);
+
+            float facing = max(0., dot(normal, to_light));
+
+            vec3 base = vec3(.5) + .5*vec3(sin(hitmat + vec3(0., .5, 1.)));
+
+
+            //color = base * sun * vec3(facing);
+            color = vec3(sun);
+            vec3 skycolor = vec3(0.5, 0.7, 1.0);
+            vec3 suncolor = vec3(1., 0.8, 0.5);
+            color = base * (ambient * skycolor + facing * sun * suncolor);
+            color = clamp(color, vec3(0.), vec3(10.));
+            //color = vec3(0.5)+.5*cos( 10*vec3(iters)/600.  + vec3(0., 0.5, 1.));
         }
 
         //color = vec3(uv, pow(zdepth/10., 5.));
         //color = vec3(1.);
 
-        if (true || hitmat != MATERIAL_SKY) {
+        if (hitmat != MATERIAL_SKY) {
             int myPointOffset = atomicAdd(currentWriteOffset, 1);
             myPointOffset %= pointBufferMaxElements;
 

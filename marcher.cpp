@@ -35,6 +35,7 @@ double getTime()
 }
 
 const int screenw = 1280, screenh = 720;
+constexpr int MAX_POINT_COUNT = 10. * screenw * screenh;
 static constexpr GLuint SAMPLE_BUFFER_TYPE = GL_RGBA16F;
 static constexpr GLuint JITTER_BUFFER_TYPE = GL_RG8;
 
@@ -110,7 +111,20 @@ int dim2nodecount(int dim)
 	return binto(int(ceil(log2(dim))) + 1);
 }
 
-constexpr int MAX_POINT_COUNT = 5. * screenw * screenh;
+// returns a vector in [-1, 1]^2
+vec2 getRandomJitter()
+{
+	static int xi;
+	static int yi;
+	int xs[] = { 4, 5, 13, 16, 0, 13, 18, 6, 14, 9, 15, 16, 9, 10, 17, 17, 6, 10, 18, 9, 9, 11, 15, 7, 8, 12, 19, 9, 0 };
+	int ys[] = { 1, 18, 9, 19, 4, 0, 14, 6, 1, 5, 9, 2, 2, 13, 7, 4, 13, 14, 12, 6, 7, 1, 10, 17, 5, 3, 6, 17, 20, 19, 13, 19, 2, 0, 12, 1, 20, 15, 6, 1, 7 };
+	int x = xs[xi];
+	int y = ys[yi];
+	xi = (xi+1) % (sizeof(xs) / sizeof(int));
+	yi = (yi+1) % (sizeof(ys) / sizeof(int));
+	return vec2(x - 10, y - 10) / 20.f;
+}
+
 
 int main() {
 
@@ -210,9 +224,6 @@ int main() {
 	Buffer stepBuffer;
 	Buffer rayIndexBuffer;
 
-	//Framebuffer fbo;
-	//glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-
 	setWrapToClamp(abuffer);
 	setWrapToClamp(gbuffer);
 	setWrapToClamp(zbuffer);
@@ -263,6 +274,7 @@ int main() {
 	int jumpBufferMaxElements = dim2nodecount(max(screenw, screenh));
 	int rayIndexBufferMaxElements = 0;
 	int maxdim = 1 << (int(log2(max(screenw, screenh))) + 1);
+	vec2 screenBoundary(screenw / float(maxdim), screenh / float(maxdim));
 
     {
 		std::vector<int> indexArray;
@@ -280,12 +292,9 @@ int main() {
             float dim = float(idim);
 
             vec2 uv = vec2(0.5/dim) + vec2(coord) / vec2(dim);
-			uv *= scale;
-
-			// TODO create parent bitmask and compact the list as indices?
-
-			// DEBUG HACK!!
-			if (true || uv.x <= 1.0 && uv.y <= 1.0) {
+			//float margin = 0.5f / dim; // no effect?
+			float margin = 0.f;
+			if ( uv.x <= screenBoundary.x + margin && uv.y <= screenBoundary.y + margin) {
 				indexArray.push_back(i);
 			}
         }
@@ -329,10 +338,13 @@ int main() {
 
 		glUseProgram(march);
 
+		vec2 cameraJitter = getRandomJitter() / float(max(screenw, screenh));
+
 		glUniform1i("frame", frame);
 		glUniform1f("secs", secs);
 		glUniform2i("screenSize", screenw, screenh);
-		glUniform2f("screenBoundary", screenw / float(maxdim), screenh / float(maxdim));
+		glUniform2f("screenBoundary", screenBoundary.x, screenBoundary.y);
+		glUniform2f("cameraJitter", cameraJitter.x, cameraJitter.y);
 		glUniform1i("pointBufferMaxElements", pointBufferMaxElements);
 		glUniform1i("jumpBufferMaxElements", jumpBufferMaxElements);
 		glUniform1i("rayIndexBufferMaxElements", rayIndexBufferMaxElements);
@@ -507,42 +519,42 @@ int main() {
 				bool isEdge = imageLoad(edgebuffer, ivec2(x, y)).x > 0;
 				float distance = length(pos.xyz - cameras[1].pos);
 				float fog = pow(min(1., distance / 15.), 1.0);
-				//c = mix(c, vec3(0.1, 0.1, 0.2)*0.1, fog);
+				c = mix(c, vec3(0.1, 0.1, 0.2)*0.1, fog);
 
 				c = c / (vec3(1.) + c);
 				c = clamp(c, vec3(0.), vec3(10.));
 
 				float weight = max(0.1, min(1e3, 1. / (pow(camSpace.z / 3., 2.) + 0.001)));
-                weight = 0.5;
 
-				isEdge = false; // DEBUG: edge smoothing disabled for performance comparisons
+                // isEdge = false; // DEBUG HACK: no AA!
 
 				if (!isEdge) {
 					uvec3 icolor = uvec3(weight * 8000 * c);
 					addRGB(pixelIdx, icolor);
 					atomicAdd(sampleWeights[pixelIdx], (uint(1000 * weight) << 16) | (255));
-				} else {
+				}
+				else {
 					vec2 w = fract(screenSpace);
 					vec4 ws = vec4(
 						(1. - w.x) * (1. - w.y),
 						w.x * (1. - w.y),
 						(1. - w.x) * w.y,
-						 w.x * w.y
+						w.x * w.y
 					);
 
 					int idx = screenSize.x * int(screenSpace.y) + int(screenSpace.x);
 
 					// FIXME: don't write over image boundaries
 					vec3 col = weight * c;
-					addRGB(idx,					uvec3(8000 * ws[0] * col));
-					addRGB(idx + 1,				uvec3(8000 * ws[1] * col));
-					addRGB(idx + screenSize.x,		uvec3(8000 * ws[2] * col));
+					addRGB(idx, uvec3(8000 * ws[0] * col));
+					addRGB(idx + 1, uvec3(8000 * ws[1] * col));
+					addRGB(idx + screenSize.x, uvec3(8000 * ws[2] * col));
 					addRGB(idx + screenSize.x + 1, uvec3(8000 * ws[3] * col));
 
-					atomicAdd(sampleWeights[idx],						(uint(1000 * weight * ws[0]) << 16) | uint(255 * ws[0]));
-					atomicAdd(sampleWeights[idx + 1],					(uint(1000 * weight * ws[1]) << 16) | uint(255 * ws[1]));
-					atomicAdd(sampleWeights[idx + screenSize.x],		(uint(1000 * weight * ws[2]) << 16) | uint(255 * ws[2]));
-					atomicAdd(sampleWeights[idx + screenSize.x + 1],	(uint(1000 * weight * ws[3]) << 16) | uint(255 * ws[3]));
+					atomicAdd(sampleWeights[idx], (uint(1000 * weight * ws[0]) << 16) | uint(255 * ws[0]));
+					atomicAdd(sampleWeights[idx + 1], (uint(1000 * weight * ws[1]) << 16) | uint(255 * ws[1]));
+					atomicAdd(sampleWeights[idx + screenSize.x], (uint(1000 * weight * ws[2]) << 16) | uint(255 * ws[2]));
+					atomicAdd(sampleWeights[idx + screenSize.x + 1], (uint(1000 * weight * ws[3]) << 16) | uint(255 * ws[3]));
 				}
 
 				atomicAdd(pointsSplatted, 1);
@@ -670,9 +682,6 @@ int main() {
 				}
 			}
 		}
-
-		// DEBUG HACK: clear points every frame
-		glClearNamedBufferData(pointBuffer, GL_R32F, GL_RED, GL_FLOAT, &zeroFloat);
 
 		TimeStamp resolveTime;
 
@@ -817,129 +826,47 @@ int main() {
                         return uv;
                     }
 
-					void main() {
-						int pixelIdx = screenSize.x * int(gl_FragCoord.y) + int(gl_FragCoord.x);
-                        vec2 pixelUV = (gl_FragCoord.xy - vec2(.5)) / screenSize.xy;
+                    void main() {
+                        int pixelIdx = screenSize.x * int(gl_FragCoord.y) + int(gl_FragCoord.x);
 
-						uvec3 icolor = uvec3(
-							colors[3 * pixelIdx + 0],
-							colors[3 * pixelIdx + 1],
-							colors[3 * pixelIdx + 2]
-						);
+                        uvec3 icolor = uvec3(
+                                colors[3 * pixelIdx + 0],
+                                colors[3 * pixelIdx + 1],
+                                colors[3 * pixelIdx + 2]
+                                );
 
-						float edgeFactor = imageLoad(edgebuffer, ivec2(gl_FragCoord.xy)).x;
-						//edgeFactor = 0.; // DEBUG HACK: edgebuffer disabled
+                        float edgeFactor = imageLoad(edgebuffer, ivec2(gl_FragCoord.xy)).x;
 
-						uint weightAlphaPacked = sampleWeights[pixelIdx];
-						uint fixedWeight = weightAlphaPacked >> 16;
-						uint fixedAlpha = weightAlphaPacked & 0xffff;
-						float weight = float(fixedWeight) / 1000.;
-						float alpha = float(fixedAlpha) / 255.;
+                        uint weightAlphaPacked = sampleWeights[pixelIdx];
+                        uint fixedWeight = weightAlphaPacked >> 16;
+                        uint fixedAlpha = weightAlphaPacked & 0xffff;
+                        float weight = float(fixedWeight) / 1000.;
+                        float alpha = float(fixedAlpha) / 255.;
 
-						alpha = pow(min(1., alpha / 2.), 0.1);
-						//alpha = pow(min(1., alpha/1.), 1.0);
-						if (edgeFactor == 0.) alpha = 1.;
-						vec3 color = vec3(icolor) / 10000.0;
-						if (weight > 0.) {
-							color /= weight; // HACK: don't divide
-						}
-						
-						//vec3 skyColor = vec3(0., 0.5, 1.);
-						vec3 skyColor = vec3(1., 0.0, 1.);
-						vec3 c = mix(skyColor, color, alpha);
-
-                        if (fixedWeight > 500) {
-                            c = vec3(1., 0., 1.); // DEBUG HACK
-
+                        alpha = pow(min(1., alpha/1.), 0.1);
+                        if (edgeFactor == 0.) alpha = 1.;
+                        vec3 color = vec3(icolor) / 10000.0;
+                        if (weight > 0.) {
+                            color /= weight;
                         }
 
-						if (false) {
-							int bin = 9;
-							int start = binto(bin);
+                        vec3 skyColor = vec3(0., 0.5, 1.);
+                        vec3 c = mix(skyColor, color, alpha);
 
-							int dim = 1 << bin;
+                        outColor = vec4(linearToSRGB(c.rgb), 1.);
+                        //outColor= vec4(vec3(alpha == 0.), 1.);
 
-							vec2 fpos = vec2(
-								((gl_FragCoord.x) / (screenSize.x / dim)),
-								((gl_FragCoord.y) / (screenSize.y / dim))
-							);
-							uvec2 pos = uvec2(fpos);
-							vec2 border = fract(fpos);
+                        vec3 noise = getNoise(ivec2(gl_FragCoord.xy));
+                        //outColor = vec4(noise, 1.);
 
-							uint z = xy2z(pos.x, pos.y);
-							uint ind = start + z;
-
-
-							int parent_start = binto(bin - 1);
-							int parent_dim = 1 << (bin - 1);
-
-							vec2 parent_fpos = vec2(
-								(gl_FragCoord.x) / (screenSize.x / parent_dim),
-								(gl_FragCoord.y) / (screenSize.y / parent_dim)
-							);
-
-							vec2 parent_border = fract(parent_fpos);
-
-							uvec2 parent_pos = uvec2(parent_fpos);
-							uint parent_z = xy2z(parent_pos.x, parent_pos.y);
-							//uint parent_ind = parent_start + parent_z;
-							uint parent_ind = parent_start + z/4;
-
-							//
-							if (ind == 112) {
-							//if (parent_ind == 27) {
-								outColor = vec4(1., 0., 1., 1.);
-								return;
-							}
-
-							float d = jumps[ind];
-							float dp= jumps[parent_ind];
-							float diff = d - dp; // should be positive
-
-							if (diff >= 0.) {
-								//c.gb *= vec2(pow(d / 5., 5.));
-								c.g *= pow(d / 5., 5.) * pow(border.x * border.y, .2);
-							} else {
-                                c.r = pow(border.x * border.y, .5);
-							}
-
-                            if (false && (frame/30 % 2 == 0)) {
-                                float worldRadius = radiuses[parent_ind];
-                                float uvRadius = worldRadius / (length(cameras[1].right));
-                                vec2 uv = debug_uvs[parent_ind];
-                                float dist = length(pixelUV - uv);
-                                if (dist < uvRadius) {
-                                    c.rg = vec2(pow(0.005/dist, 1.0), 0.);
-                                }
-                                if (dist < uvRadius / sqrt(2.)) {
-                                    c.rg = c.gr;
-                                }
-                            }
-
-                            if (d == 0.)
-                            {
-                                //c.rgb = vec3(1., 0., 0.);
-                            }
-
-                            //c.rgb = vec3(pow(d / 5., 5.));
-                            //c.rgb = vec3(parent_fpos/80., 0.);
-						}
-
-						//outColor = vec4(linearToSRGB(c.rgb), 1.);
-						outColor = vec4(c.rgb, 1.); // HACK: no gamma
-						//outColor= vec4(vec3(alpha == 0.), 1.);
-
-						vec3 noise = getNoise(ivec2(gl_FragCoord.xy));
-						//outColor = vec4(noise, 1.);
-
-						// Clear the accumulation buffer
-						colors[3 * pixelIdx + 0] = 0;
-						colors[3 * pixelIdx + 1] = 0;
-						colors[3 * pixelIdx + 2] = 0;
-						sampleWeights[pixelIdx] = 0;
-						// Clear the edge buffer
-						imageStore(edgebuffer, ivec2(gl_FragCoord.xy), vec4(0.));
-					}
+                        // Clear the accumulation buffer
+                        colors[3 * pixelIdx + 0] = 0;
+                        colors[3 * pixelIdx + 1] = 0;
+                        colors[3 * pixelIdx + 2] = 0;
+                        sampleWeights[pixelIdx] = 0;
+                        // Clear the edge buffer
+                        imageStore(edgebuffer, ivec2(gl_FragCoord.xy), vec4(0.));
+                    }
 				)
 			);
 
