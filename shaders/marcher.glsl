@@ -40,7 +40,7 @@ struct CameraParams {
     vec3 dir;
     float nearplane;
     vec3 up;
-    float padding2;
+    float aspect;
     vec3 right;
     float padding3;
 };
@@ -105,7 +105,7 @@ layout(std430) buffer stepBuffer {
 
 #define USE_ANALYTIC_CONE_STEP 1
 #define USE_HIT_REFINEMENT 0
-#define USE_TREE 1
+#define USE_TREE 0
 
 // This factor how many pixel radiuses of screen space error do we allow
 // in the "near geometry snapping" at the end of "march" loop. Without it
@@ -507,6 +507,8 @@ void main() {
             color = vec3(1., pow(zdepth/10., 5.), 0.); // * vec3(0., 1., 0.);
             //color = vec3(0., pow(iters/10., 5.), 0.); // * vec3(0., 1., 0.);
         }
+
+        color = vec3(uv, 0.);
 
         if (hitmat != MATERIAL_SKY) {
             int myPointOffset = atomicAdd(currentWriteOffset, 1);

@@ -9,7 +9,7 @@ struct CameraParameters {
 	vec3 dir;
 	float nearplane;
 	vec3 up;
-	float padding2;
+	float aspect;
 	vec3 right;
 	float padding3;
 };
@@ -34,7 +34,7 @@ double getTime()
 	return (double)ElapsedMicroseconds.QuadPart / 1000000.;
 }
 
-const int screenw = 1024, screenh = 1024;
+const int screenw = 1280, screenh = 720;
 static constexpr GLuint SAMPLE_BUFFER_TYPE = GL_RGBA16F;
 static constexpr GLuint JITTER_BUFFER_TYPE = GL_RG8;
 
@@ -48,6 +48,8 @@ static void cameraPath(float t, CameraParameters& cam)
 	//cam.dir = vec3(0., 0., -1.);
 	cam.right = normalize(cross(cam.dir, vec3(0.f, 1.f, 0.f)));
 	cam.up = cross(cam.dir, cam.right);
+
+	cam.aspect = float(screenw) / float(screenh);
 	
 	float nearplane = 0.1f;
 	float zoom = 1.0f;
@@ -56,6 +58,7 @@ static void cameraPath(float t, CameraParameters& cam)
 	cam.right /= zoom;
 	cam.up *= nearplane;
 	cam.up /= zoom;
+	//cam.up /= cam.aspect;
 
 	cam.nearplane = length(cam.dir);
 }
@@ -361,7 +364,7 @@ int main() {
 				vec3 dir;
 				float nearplane;
 				vec3 up;
-				float padding2;
+				float aspect;
 				vec3 right;
 				float padding3;
 			};
@@ -408,16 +411,17 @@ int main() {
 
 			layout(rgba32f) uniform image2D gbuffer;
 
-			vec3 reprojectPoint(CameraParams cam, vec3 p) {
+			vec3 projectPoint(CameraParams cam, vec3 p) {
 				vec3 op = p - cam.pos;
 				float n = length(cam.dir);
 				float z = dot(cam.dir, op) / n;
 				vec3 pp = (op * n) / z;
+                vec3 up = cam.up / cam.aspect;
 				vec2 plane = vec2(
 					dot(pp, cam.right) / dot(cam.right, cam.right),
-					dot(pp, cam.up) / dot(cam.up, cam.up)
+					dot(pp, up) / dot(up, up)
 				);
-				return vec3(plane + vec2(0.5), z);
+				return vec3(plane + vec2(0.5, 0.5 * cam.aspect), z);
 			}
 
 			void addRGB(uint pixelIdx, uvec3 c) {
@@ -453,7 +457,8 @@ int main() {
 				if (pos == vec4(0.))
 					return;
 
-				vec3 camSpace = reprojectPoint(cameras[1], pos.xyz);
+				vec3 camSpace = projectPoint(cameras[1], pos.xyz);
+                //camSpace.y *= 16./9.;
 				vec2 screenSpace = camSpace.xy * vec2(screenSize.x, screenSize.y);
 				int x = int(screenSpace.x);
 				int y = int(screenSpace.y);
@@ -653,7 +658,7 @@ int main() {
 						vec3 dir;
 						float nearplane;
 						vec3 up;
-						float padding2;
+						float aspect;
 						vec3 right;
 						float padding3;
 					};
