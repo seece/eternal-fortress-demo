@@ -345,6 +345,16 @@ vec3 evalnormal(vec3 p) {
                 ));
 }
 
+vec3 evalnormal_rough(vec3 p) {
+    vec2 e=vec2(1e-3, 0.f);
+    int m;
+    return normalize(vec3(
+                scene(p + e.xyy,m) - scene(p - e.xyy,m),
+                scene(p + e.yxy,m) - scene(p - e.yxy,m),
+                scene(p + e.yyx,m) - scene(p - e.yyx,m)
+                ));
+}
+
 vec2 shadowMarch(inout vec3 p, vec3 rd, int num_iters, float w, float mint, float maxt) {
     vec3 ro = p;
     int i;
@@ -649,6 +659,7 @@ void main() {
             color = skyColor;
         } else {
             vec3 normal = evalnormal(p);
+            vec3 roughNormal = evalnormal_rough(p);
             vec3 to_camera = normalize(cam.pos - p);
             vec3 to_light = sunDirection;
 
@@ -667,9 +678,7 @@ void main() {
 
             vec3 base = vec3(.5) + .5*vec3(sin(hitmat + vec3(0., .5, 1.)));
 
-
-            //color = base * sun * vec3(facing);
-            color = vec3(sun);
+            color = base * sun * vec3(facing);
             vec3 skycolor = vec3(0.5, 0.7, 1.0);
             vec3 suncolor = vec3(1., 0.8, 0.5);
             color = base * (ambient * skycolor + facing * sun * suncolor);
@@ -681,7 +690,7 @@ void main() {
             int myPointOffset = atomicAdd(currentWriteOffset, 1);
             myPointOffset %= pointBufferMaxElements;
 
-            vec2 packedNormal = encodeNormal(normal);
+            vec2 packedNormal = encodeNormal(roughNormal);
 
             points[myPointOffset].xyz = p;
             points[myPointOffset].normalSpecularSun = packUnorm4x8(vec4(packedNormal, 0.5, sun));

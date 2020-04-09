@@ -318,7 +318,6 @@ int main() {
 		// timestamp objects make gl queries at those locations; you can substract them to get the time
 		TimeStamp start;
 		float secs = getTime(); //fmod(frame / 60.f, 2.0) + 21.;
-		secs = 0.;
 		float futureInterval = 0. / 60.f;
 		cameraPath(secs + futureInterval, cameras[1]);
 		glNamedBufferSubData(cameraData, 0, sizeof(cameras), &cameras);
@@ -546,13 +545,15 @@ int main() {
 				bool isEdge = imageLoad(edgebuffer, ivec2(x, y)).x > 0;
 				float distance = length(pos - cameras[1].pos);
 				float fog = pow(min(1., distance / 15.), 1.0);
-				//c = mix(c, vec3(0.1, 0.1, 0.2)*0.1, fog); // DEBUG HACK no fog
+				c = mix(c, vec3(0.1, 0.1, 0.2)*0.1, fog); // DEBUG HACK no fog
 
                 float diffuse = max(0., dot(sunDirection, normal));
                 vec3 toCamera = normalize(-fromCamToPoint);
                 vec3 H = normalize(sunDirection + toCamera);
                 float specular = pow(max(0., dot(normal, H)), 20.);
-                c = vec3(specular);
+                c *= 0.1;
+                c += 0.9 * vec3(specular * sun);
+                //c = vec3(specular * sun);
 
 
 				c = c / (vec3(1.) + c);
