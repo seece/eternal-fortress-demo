@@ -844,12 +844,12 @@ int main() {
 							color /= weight; // HACK: don't divide
 						}
 						
-						 // vec3 skyColor = vec3(0., 0.5, 1.);
-						 // vec3 c = mix(skyColor, color, alpha);
-                        vec3 c = color;
+						//vec3 skyColor = vec3(0., 0.5, 1.);
+						vec3 skyColor = vec3(1., 0.0, 1.);
+						vec3 c = mix(skyColor, color, alpha);
 
                         if (fixedWeight > 500) {
-                            c = vec3(1., 0., 0.);
+                            c = vec3(1., 0., 1.); // DEBUG HACK
 
                         }
 

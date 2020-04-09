@@ -408,7 +408,7 @@ void main() {
     ivec2 res = screenSize;
 
     const int maxRayIndex = res.x * res.y;
-#define USE_TREE 1
+#define USE_TREE 0
 
     while (nextRayIndex < rayIndexBufferMaxElements) {
         int arrayIdx = atomicAdd(nextRayIndex, 1);
@@ -420,22 +420,16 @@ void main() {
         globalMyIdx = myIdx;
         int idim;
         int parentIdx = -2, sideLength = -1;
-        //uvec2 ic = i2gridCoord(myIdx, idim);
-        //if (ic.y > idim * cameras[1].aspect)
-        //    continue;
 
         ivec2 squareCoord;
         vec2 squareUV = i2ray(myIdx, squareCoord, parentIdx, sideLength);
-        //squareUV.xy *= vec2(2048 / 1280., 2048 / 720.);
-        //squareUV.x *= 2048 / 1280.;
-        //squareUV.y *= 2048 / 1280.;
-        //vec2 boundary = vec2(1280. / 2048., 720. / 2048.);
+
         if (squareUV.x > screenBoundary.x || squareUV.y > screenBoundary.y) {
             continue;
         }
         squareUV /= screenBoundary.xx;
 
-        ivec2 pixelCoord = ivec2(squareUV * res.xy);
+        ivec2 pixelCoord = ivec2(squareUV * vec2(1., cameras[1].aspect) * res.xy);
 #else
         int myIdx = arrayIdx;
         if (myIdx >= res.x * res.y)
@@ -543,7 +537,7 @@ void main() {
             //color = vec3(0., pow(iters/10., 5.), 0.); // * vec3(0., 1., 0.);
         }
 
-        color = vec3(uv, pow(zdepth/10., 5.));
+        //color = vec3(uv, pow(zdepth/10., 5.));
         //color = vec3(1.);
 
         if (true || hitmat != MATERIAL_SKY) {
