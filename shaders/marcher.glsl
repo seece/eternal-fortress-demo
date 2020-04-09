@@ -106,6 +106,7 @@ layout(std430) buffer stepBuffer {
 float PIXEL_RADIUS;
 float PROJECTION_PLANE_DIST;
 float NEAR_PLANE;
+float STEP_FACTOR;
 
 const int PARENT_INDEX  = 16;
 const int CHILD_INDEX = 112;
@@ -159,12 +160,12 @@ float mandelbox(vec3 position, int iters=7) {
     return d;
 }
 
-float scene_fractal(vec3 p, out int material, float pixelConeSize=1.) {
+float scene(vec3 p, out int material, float pixelConeSize=1.) {
 	material = MATERIAL_OTHER;
 	return mandelbox(p, 9);
 }
 
-float scene(vec3 p, out int material, float pixelConeSize=1.) {
+float scene_sphere(vec3 p, out int material, float pixelConeSize=1.) {
 	material = MATERIAL_OTHER;
     float d = length(p) - 1.;
     return d;
@@ -207,10 +208,10 @@ float depth_march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int
             break;
         }
 
-        last_t = t;
-        //t = (t + d) * STEP_FACTOR;
-        t += (d - coneWorldRadius);
+        last_t = (t + d) - coneWorldRadius;
+        //last_t = t;
         //t += (d - coneWorldRadius);
+        t += d;
 
         if (t >= end_t) {
             break;
@@ -413,7 +414,7 @@ void main() {
         }
 
         float parentDepth = jumps[parentIdx];
-        parentDepth = 0.; // DEBUG HACK
+        //parentDepth = 0.; // DEBUG HACK
 
         CameraParams cam = cameras[1];
         vec3 p, dir;
@@ -422,7 +423,12 @@ void main() {
         vec3 rp = p - cam.pos;
         PROJECTION_PLANE_DIST = length(rp);
         NEAR_PLANE = length(cam.dir);
-        PIXEL_RADIUS = sqrt(2.) * length(cam.right) / float(sideLength);
+        PIXEL_RADIUS = .5 * sqrt(2.) * length(cam.right) / float(sideLength);
+        {
+            float aperture = 2. * PIXEL_RADIUS;
+            float C = sqrt(aperture * aperture + 1.);
+            STEP_FACTOR = C / (C - aperture);
+        }
 
         int hitmat = MATERIAL_SKY;
         vec2 restart;
@@ -434,11 +440,14 @@ void main() {
         if (isLowestLevel) {
             zdepth = march(p, dir, hitmat, restart, 400, iters, parentDepth);
         } else {
-            zdepth = depth_march(p, dir, hitmat, restart, 400, iters, parentDepth);
+            float tdepth = depth_march(p, dir, hitmat, restart, 400, iters, parentDepth);
+            zdepth = tdepth;
+            //zdepth = dot(dir * tdepth, normalize(cam.dir)) - NEAR_PLANE;
+            //zdepth = tdepth * dot(dir, normalize(cam.dir)) - NEAR_PLANE;
         }
 
         if (myIdx == CHILD_INDEX) {
-            debug_pixelRadius = PIXEL_RADIUS;
+            debug_pixelRadius = iters;
             debug_nearPlane = NEAR_PLANE;
             debug_projPlaneDist = PROJECTION_PLANE_DIST;
             debug_zdepth = zdepth;
@@ -470,6 +479,7 @@ void main() {
             color = skyColor;
         } else {
             color = vec3(pow(zdepth/10., 5.), 0., 0.); // * vec3(0., 1., 0.);
+            //color = vec3(0., pow(iters/10., 5.), 0.); // * vec3(0., 1., 0.);
         }
 
         if (true /* DEBUG HACK */ || hitmat != MATERIAL_SKY) {

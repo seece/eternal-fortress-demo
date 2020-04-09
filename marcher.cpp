@@ -42,10 +42,10 @@ static void cameraPath(float t, CameraParameters& cam)
 {
 	float tt = t * 0.1f / 8.;
 	//cam.pos = vec3(0.5f*sin(tt), 0.f, 6.f + 0.5f*cos(tt));
-	//cam.pos = vec3(0. + 2.0 * sin(tt), -4., 7.f + 0.1f*cos(tt));
-	//cam.dir = normalize(vec3(0.5f*cos(tt*0.5f), 0.3 + 0.2f*sin(tt), -1.f));
-	cam.pos = vec3(0., 0., 4.);
-	cam.dir = vec3(0., 0., -1.);
+	cam.pos = vec3(0. + 2.0 * sin(tt), -4., 7.f + 0.1f*cos(tt));
+	cam.dir = normalize(vec3(0.5f*cos(tt*0.5f), 0.3 + 0.2f*sin(tt), -1.f));
+	//cam.pos = vec3(0., 0., 4.);
+	//cam.dir = vec3(0., 0., -1.);
 	cam.right = normalize(cross(cam.dir, vec3(0.f, 1.f, 0.f)));
 	cam.up = cross(cam.dir, cam.right);
 	
@@ -752,29 +752,27 @@ int main() {
 						return x | (y << 1);
 					}
 
-					vec2 i2ray(int i, out ivec2 squareCoord, out int parentIdx, out int sideLength)
-					{
-						int b = tobin(i);
-						int start = binto(b);
-						int z = i - start;
-						uvec2 coord = z2xy(uint(z));
-						int dim = 1 << b;
-						int size = dim * dim;
+                    vec2 i2ray(int i, out ivec2 squareCoord, out int parentIdx, out int sideLength)
+                    {
+                        int b = tobin(i);
+                        int start = binto(b);
+                        int z = i - start;
+                        uvec2 coord = z2xy(uint(z));
+                        int idim = 1 << b;
+                        int size = idim * idim;
+                        float dim = float(idim);
 
-						int parent_size = size >> 2; // (2 << (b-1));
-						int parent = int(start - parent_size) + (z / 4);
+                        int parent_size = size / 4;
+                        int parent = int(start - parent_size) + (z/4);
 
-						float margin = 1.0 / float(2 * dim);
-						float step = (1.0 - 1. / float(dim)) / float(dim);
+                        squareCoord = ivec2(coord + vec2(.5));
+                        parentIdx = parent;
+                        sideLength = idim;
 
-						squareCoord = ivec2(coord + vec2(.5));
-						parentIdx = parent;
-						sideLength = dim;
+                        vec2 uv = vec2(0.5/dim) + coord / vec2(dim);
 
-						vec2 uv = vec2(margin) + step * vec2(coord);
-
-						return uv;
-					}
+                        return uv;
+                    }
 
 					void main() {
 						int pixelIdx = screenSize.x * int(gl_FragCoord.y) + int(gl_FragCoord.x);
@@ -807,7 +805,7 @@ int main() {
 						vec3 c = mix(skyColor, color, alpha);
 
 						if (true) {
-							int bin = 4;
+							int bin = 8;
 							int start = binto(bin);
 
 							int dim = 1 << bin;
@@ -857,7 +855,8 @@ int main() {
 							}
 
                             if (false && (frame/30 % 2 == 0)) {
-                                float uvRadius = radiuses[parent_ind];
+                                float worldRadius = radiuses[parent_ind];
+                                float uvRadius = worldRadius / (length(cameras[1].right));
                                 vec2 uv = debug_uvs[parent_ind];
                                 float dist = length(pixelUV - uv);
                                 if (dist < uvRadius) {
