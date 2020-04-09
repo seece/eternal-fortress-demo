@@ -494,10 +494,18 @@ int main() {
 			}
 
 			void addRGB(uint pixelIdx, vec3 c) {
-                c *= 8000;
-				atomicAdd(colors[3 * pixelIdx + 0], uint(c.r));
-				atomicAdd(colors[3 * pixelIdx + 1], uint(c.g));
-				atomicAdd(colors[3 * pixelIdx + 2], uint(c.b));
+                uint bits = packUnorm4x8(vec4(
+                            pow(c, vec3(.7)) * vec3(0.5, 0.5, .5)
+                            , 0.));
+                uint expanded = ((bits & 0xff0000) << 6) | ((bits & 0xff00) << 3) | (bits & 0xff);
+                if (false) {
+                    c *= 8000;
+                    atomicAdd(colors[3 * pixelIdx + 0], uint(c.r));
+                    atomicAdd(colors[3 * pixelIdx + 1], uint(c.g));
+                    atomicAdd(colors[3 * pixelIdx + 2], uint(c.b));
+                } else {
+                    atomicAdd(colors[pixelIdx], expanded);
+                }
 			}
 
 			void main()
@@ -549,21 +557,21 @@ int main() {
                 vec3 toCamera = normalize(-fromCamToPoint);
                 vec3 H = normalize(sunDirection + toCamera);
                 float specular = pow(max(0., dot(normal, H)), 50.);
-                //c = mix(c, vec3(specular * sun), 0.95);
+                c = mix(c, vec3(specular * sun), 0.95);
                 //c = vec3(specular * sun);
 
 				float distance = length(fromCamToPoint);
-				float fog = pow(min(1., distance / 15.), 1.0);
-				c = mix(c, vec3(0.1, 0.1, 0.2)*0.1, fog); // DEBUG HACK no fog
+				float fog = pow(min(1., distance / 20.), 1.0);
+				//c = mix(c, vec3(0.1, 0.1, 0.2)*0.1, fog);
 
 				c = c / (vec3(1.) + c);
-				c = clamp(c, vec3(0.), vec3(10.));
+				c = clamp(c, vec3(0.), vec3(1.));
 
 				float weight = max(0.1, min(1e3, 1. / (pow(camSpace.z / 3., 2.) + 0.001)));
 
                 // isEdge = false; // DEBUG HACK: no AA!
 
-				if (!isEdge) {
+				if (false && !isEdge) {
 					addRGB(pixelIdx, weight * c);
 					atomicAdd(sampleWeights[pixelIdx], (uint(1000 * weight) << 16) | (255));
 				}
@@ -580,10 +588,10 @@ int main() {
 
 					// FIXME: don't write over image boundaries
 					vec3 col = weight * c;
-					addRGB(idx, ws[0] * col);
-					addRGB(idx + 1, ws[1] * col);
-					addRGB(idx + screenSize.x, ws[2] * col);
-					addRGB(idx + screenSize.x + 1, ws[3] * col);
+					addRGB(idx,                     ws[0] * col);
+					addRGB(idx + 1,                 ws[1] * col);
+					addRGB(idx + screenSize.x,      ws[2] * col);
+					addRGB(idx + screenSize.x + 1,  ws[3] * col);
 
 					atomicAdd(sampleWeights[idx], (uint(1000 * weight * ws[0]) << 16) | uint(255 * ws[0]));
 					atomicAdd(sampleWeights[idx + 1], (uint(1000 * weight * ws[1]) << 16) | uint(255 * ws[1]));
@@ -881,7 +889,25 @@ int main() {
 
                         alpha = pow(min(1., alpha/1.), 0.1);
                         if (edgeFactor == 0.0) alpha = 1.;
-                        vec3 color = vec3(icolor) / 10000.0;
+
+                        //uint bits = packUnorm4x8(vec4(c, 0.));
+                        //uint expanded = ((bits & 0xff0000) << 6) | ((bits & 0xff00) << 3) | (bits & 0xff);
+                        uint packedColor = colors[pixelIdx];
+                        vec3 color = vec3(
+                                packedColor & 0x7ff,
+                                (packedColor & 0x3FF800) >> 11,
+                                (packedColor & 0xffc00000) >> 22);
+                        color /= 255.;
+                        color *= vec3(2., 2., 2.);
+                        color = pow(color, vec3(1./0.7));
+
+                        // "color" is now Reinhard tone mapped
+
+                        //color = color * color;
+
+                        //color = vec3(color.b);
+                        //vec3 color = vec3(icolor) / 10000.0;
+
                         if (weight > 0.) {
                             color /= weight;
                         }
@@ -898,9 +924,10 @@ int main() {
                         //outColor = vec4(noise, 1.);
 
                         // Clear the accumulation buffer
-                        colors[3 * pixelIdx + 0] = 0;
-                        colors[3 * pixelIdx + 1] = 0;
-                        colors[3 * pixelIdx + 2] = 0;
+                        colors[pixelIdx] = 0;
+                        //colors[3 * pixelIdx + 0] = 0;
+                        //colors[3 * pixelIdx + 1] = 0;
+                        //colors[3 * pixelIdx + 2] = 0;
                         sampleWeights[pixelIdx] = 0;
                         // Clear the edge buffer
                         imageStore(edgebuffer, ivec2(gl_FragCoord.xy), vec4(0.));
