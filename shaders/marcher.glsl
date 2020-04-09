@@ -380,6 +380,7 @@ vec2 i2ray(int i, out ivec2 squareCoord, out int parentIdx, out int sideLength)
      return uv;
 }
 
+#define USE_TREE 1
 
 void main() {
     ivec2 res = imageSize(zbuffer).xy;
@@ -391,12 +392,21 @@ void main() {
         if (myIdx >= jumpBufferMaxElements)
             return;
         globalMyIdx = myIdx;
-
+#if USE_TREE
         int parentIdx = -2, sideLength = -1;
         ivec2 squareCoord;
         vec2 squareUV = i2ray(myIdx, squareCoord, parentIdx, sideLength);
 
         ivec2 pixelCoord = squareCoord;
+#else
+        if (myIdx >= res.x * res.y)
+            return;
+        int parentIdx = 0;
+        int sideLength = res.x;
+        ivec2 pixelCoord = ivec2(myIdx % res.x, myIdx / res.x);
+        vec2 squareUV = (vec2(0.5) / vec2(sideLength)) + pixelCoord / vec2(sideLength);
+#endif
+
 
         srand(frame, uint(pixelCoord.x), uint(pixelCoord.y));
         jenkins_mix();
@@ -413,8 +423,11 @@ void main() {
             continue;
         }
 
+#if USE_TREE
         float parentDepth = jumps[parentIdx];
-        //parentDepth = 0.; // DEBUG HACK
+#else
+        float parentDepth = 0.;
+#endif
 
         CameraParams cam = cameras[1];
         vec3 p, dir;
@@ -461,7 +474,9 @@ void main() {
             debug_parentUVy = uv.y;
         }
 
+#if USE_TREE
         jumps[myIdx] = zdepth;
+#endif
         //radiuses[myIdx] = (PIXEL_RADIUS / (2.* length(cam.right)));
         radiuses[myIdx] = PIXEL_RADIUS;
         debug_uvs[myIdx] = uv;
@@ -478,7 +493,7 @@ void main() {
         if (hitmat == MATERIAL_SKY) {
             color = skyColor;
         } else {
-            color = vec3(pow(zdepth/10., 5.), 0., 0.); // * vec3(0., 1., 0.);
+            color = vec3(0., pow(zdepth/10., 5.), 0.); // * vec3(0., 1., 0.);
             //color = vec3(0., pow(iters/10., 5.), 0.); // * vec3(0., 1., 0.);
         }
 

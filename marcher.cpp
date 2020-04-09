@@ -454,7 +454,7 @@ int main() {
 					return;
 
 				vec3 camSpace = reprojectPoint(cameras[1], pos.xyz);
-				vec2 screenSpace = camSpace.xy * vec2(screenSize.x+1, screenSize.y+1);
+				vec2 screenSpace = camSpace.xy * vec2(screenSize.x, screenSize.y);
 				int x = int(screenSpace.x);
 				int y = int(screenSpace.y);
 
@@ -805,7 +805,7 @@ int main() {
 						vec3 c = mix(skyColor, color, alpha);
 
 						if (true) {
-							int bin = 8;
+							int bin = 9;
 							int start = binto(bin);
 
 							int dim = 1 << bin;
