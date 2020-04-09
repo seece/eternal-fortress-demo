@@ -31,6 +31,7 @@ uniform float secs;
 uniform ivec2 screenSize;
 uniform vec2 screenBoundary;
 uniform vec2 cameraJitter;
+uniform vec3 sunDirection;
 
 layout(r32f) uniform image2D zbuffer;
 layout(r8) uniform image2D edgebuffer;
@@ -545,7 +546,7 @@ void main() {
         if (isLowestLevel) {
             vec2 jitter = vec2(rand() - 0.5, rand() - 0.5);
             jitter /= res;
-            //jitter *= 0.95;
+            jitter *= 0.9;
             uv += jitter;
         }
 
@@ -610,16 +611,14 @@ void main() {
         } else {
             vec3 normal = evalnormal(p);
             vec3 to_camera = normalize(cam.pos - p);
-            vec3 to_light = normalize(vec3(-0.5, -1.0, 0.7));
+            vec3 to_light = sunDirection;
 
             vec3 shadowRayPos = p + to_camera * 1e-4;
             const float maxShadowDist = 10.;
-            vec2 shadowResult = shadowMarch(shadowRayPos, to_light, 400, 9e-2, 0.01, maxShadowDist);
+            vec2 shadowResult = shadowMarch(shadowRayPos, to_light, 200, 9e-2, 5e-3, maxShadowDist);
             float sun = min(shadowResult.x, maxShadowDist) / maxShadowDist;
-            //sun = max(0., shadowResult.y - 0.1);
-            //sun = (sun+0.1) * shadowResult.y;
+            //sun = pow(shadowResult.y-0.1, 3.0);
 
-            //float sun = min(1.0, shadowResult.y*1e3);
             sun = pow(sun, 2.);
 
             float ambient = sampleAO(p, normal);
@@ -636,6 +635,8 @@ void main() {
             vec3 suncolor = vec3(1., 0.8, 0.5);
             color = base * (ambient * skycolor + facing * sun * suncolor);
             color = clamp(color, vec3(0.), vec3(10.));
+
+            //color = vec3(sun);
             //color = vec3(0.5)+.5*cos( 10*vec3(iters)/600.  + vec3(0., 0.5, 1.));
         }
 
@@ -654,7 +655,10 @@ void main() {
         if (zdepth >= MAX_DISTANCE) {
             for (int y=-1;y<=1;y++) {
                 for (int x=-1;x<=1;x++) {
-                    imageStore(edgebuffer, pixelCoord + ivec2(x, y), vec4(1.));
+                    //float old = imageLoad(edgebuffer, pixelCoord + ivec2(x, y)).x;
+                    //imageStore(edgebuffer, pixelCoord + ivec2(x, y), vec4(old+1./10.));
+                    imageStore(edgebuffer, pixelCoord + ivec2(x, y), vec4(1));
+                    //imageAtomicAdd(edgebuffer, pixelCoord + ivec2(x, y), 1.);
                 }
             }
         }

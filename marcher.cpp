@@ -321,6 +321,8 @@ int main() {
 		float futureInterval = 0. / 60.f;
 		cameraPath(secs + futureInterval, cameras[1]);
 		glNamedBufferSubData(cameraData, 0, sizeof(cameras), &cameras);
+		vec3 sunDirection = normalize(vec3(-0.5f, -1.0f, 0.7f));
+
 		float zeroFloat = 0.f;
 		glClearNamedBufferData(jumpbuffer, GL_R32F, GL_RED, GL_FLOAT, &zeroFloat);
 
@@ -345,6 +347,7 @@ int main() {
 		glUniform2i("screenSize", screenw, screenh);
 		glUniform2f("screenBoundary", screenBoundary.x, screenBoundary.y);
 		glUniform2f("cameraJitter", cameraJitter.x, cameraJitter.y);
+		glUniform3f("sunDirection", sunDirection.x, sunDirection.y, sunDirection.z);
 		glUniform1i("pointBufferMaxElements", pointBufferMaxElements);
 		glUniform1i("jumpBufferMaxElements", jumpBufferMaxElements);
 		glUniform1i("rayIndexBufferMaxElements", rayIndexBufferMaxElements);
@@ -507,8 +510,8 @@ int main() {
 					return;
 
 				vec3 camSpace = projectPoint(cameras[1], pos.xyz);
-                //camSpace.y *= 16./9.;
 				vec2 screenSpace = camSpace.xy * vec2(screenSize.x, screenSize.y);
+
 				int x = int(screenSpace.x);
 				int y = int(screenSpace.y);
 
@@ -843,8 +846,9 @@ int main() {
                         float weight = float(fixedWeight) / 1000.;
                         float alpha = float(fixedAlpha) / 255.;
 
+
                         alpha = pow(min(1., alpha/1.), 0.1);
-                        if (edgeFactor == 0.) alpha = 1.;
+                        if (edgeFactor == 0.0) alpha = 1.;
                         vec3 color = vec3(icolor) / 10000.0;
                         if (weight > 0.) {
                             color /= weight;
@@ -852,6 +856,8 @@ int main() {
 
                         vec3 skyColor = vec3(0., 0.5, 1.);
                         vec3 c = mix(skyColor, color, alpha);
+
+                        //c= vec3(edgeFactor > 0.5);
 
                         outColor = vec4(linearToSRGB(c.rgb), 1.);
                         //outColor= vec4(vec3(alpha == 0.), 1.);
