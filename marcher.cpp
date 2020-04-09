@@ -262,10 +262,11 @@ int main() {
 
 	int jumpBufferMaxElements = dim2nodecount(max(screenw, screenh));
 	int rayIndexBufferMaxElements = 0;
+	int maxdim = 1 << (int(log2(max(screenw, screenh))) + 1);
 
     {
 		std::vector<int> indexArray;
-        int maxdim = 1 << (int(log2(max(screenw, screenh))) + 1);
+
         vec2 scale = (float(maxdim) / float(screenw), float(maxdim) / float(screenw));
 		float aspect = float(screenw) / float(screenh);
 
@@ -283,8 +284,8 @@ int main() {
 
 			// TODO create parent bitmask and compact the list as indices?
 
-			float pixelSize = 1.0 / dim;
-			if (uv.x <= 1.0 - pixelSize && uv.y <= 1.0 - pixelSize) {
+			// DEBUG HACK!!
+			if (true || uv.x <= 1.0 && uv.y <= 1.0) {
 				indexArray.push_back(i);
 			}
         }
@@ -330,6 +331,8 @@ int main() {
 
 		glUniform1i("frame", frame);
 		glUniform1f("secs", secs);
+		glUniform2i("screenSize", screenw, screenh);
+		glUniform2f("screenBoundary", screenw / float(maxdim), screenh / float(maxdim));
 		glUniform1i("pointBufferMaxElements", pointBufferMaxElements);
 		glUniform1i("jumpBufferMaxElements", jumpBufferMaxElements);
 		glUniform1i("rayIndexBufferMaxElements", rayIndexBufferMaxElements);
@@ -838,11 +841,17 @@ int main() {
 						if (edgeFactor == 0.) alpha = 1.;
 						vec3 color = vec3(icolor) / 10000.0;
 						if (weight > 0.) {
-							//color /= weight; // HACK: don't divide
+							color /= weight; // HACK: don't divide
 						}
 						
-						vec3 skyColor = vec3(0., 0.5, 1.);
-						vec3 c = mix(skyColor, color, alpha);
+						 // vec3 skyColor = vec3(0., 0.5, 1.);
+						 // vec3 c = mix(skyColor, color, alpha);
+                        vec3 c = color;
+
+                        if (fixedWeight > 500) {
+                            c = vec3(1., 0., 0.);
+
+                        }
 
 						if (false) {
 							int bin = 9;

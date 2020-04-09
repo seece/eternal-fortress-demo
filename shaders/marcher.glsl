@@ -28,6 +28,8 @@ const int MATERIAL_OTHER = 1;
 uniform int source;
 uniform int frame;
 uniform float secs;
+uniform ivec2 screenSize;
+uniform vec2 screenBoundary;
 
 layout(r32f) uniform image2D zbuffer;
 layout(r8) uniform image2D edgebuffer;
@@ -110,7 +112,6 @@ layout(std430) buffer stepBuffer {
 
 #define USE_ANALYTIC_CONE_STEP 1
 #define USE_HIT_REFINEMENT 0
-#define USE_TREE 1
 
 // This factor how many pixel radiuses of screen space error do we allow
 // in the "near geometry snapping" at the end of "march" loop. Without it
@@ -390,6 +391,7 @@ vec2 i2ray(int i, out ivec2 squareCoord, out int parentIdx, out int sideLength)
 
     vec2 uv = vec2(0.5/dim) + coord / vec2(dim);
 
+
     if (i == 599) {
         debug_i = i;
         debug_parent = parent;
@@ -403,9 +405,10 @@ vec2 i2ray(int i, out ivec2 squareCoord, out int parentIdx, out int sideLength)
 }
 
 void main() {
-    ivec2 res = imageSize(zbuffer).xy;
+    ivec2 res = screenSize;
 
     const int maxRayIndex = res.x * res.y;
+#define USE_TREE 1
 
     while (nextRayIndex < rayIndexBufferMaxElements) {
         int arrayIdx = atomicAdd(nextRayIndex, 1);
@@ -413,6 +416,7 @@ void main() {
         if (arrayIdx >= rayIndexBufferMaxElements)
             return;
         int myIdx = rayIndices[arrayIdx];
+        //int myIdx = arrayIdx;
         globalMyIdx = myIdx;
         int idim;
         int parentIdx = -2, sideLength = -1;
@@ -423,8 +427,13 @@ void main() {
         ivec2 squareCoord;
         vec2 squareUV = i2ray(myIdx, squareCoord, parentIdx, sideLength);
         //squareUV.xy *= vec2(2048 / 1280., 2048 / 720.);
-        squareUV.x *= 2048 / 1280.;
-        squareUV.y *= 2048 / 1280.;
+        //squareUV.x *= 2048 / 1280.;
+        //squareUV.y *= 2048 / 1280.;
+        //vec2 boundary = vec2(1280. / 2048., 720. / 2048.);
+        if (squareUV.x > screenBoundary.x || squareUV.y > screenBoundary.y) {
+            continue;
+        }
+        squareUV /= screenBoundary.xx;
 
         ivec2 pixelCoord = ivec2(squareUV * res.xy);
 #else
@@ -445,6 +454,7 @@ void main() {
 
         vec2 uv = squareUV;
 
+        /*
         if (any(greaterThan(uv, vec2(1.0)))) {
             continue;
         }
@@ -453,10 +463,11 @@ void main() {
         if (any(lessThan(uv, vec2(-0.5/res.x, -0.5/res.y)))) {
             continue;
         }
+        */
 
 #if USE_TREE
         float parentDepth = jumps[parentIdx];
-        //parentDepth = 0.; // HACK!!!
+        parentDepth = 0.; // HACK!!!
         if (parentDepth >= MAX_DISTANCE) {
             jumps[myIdx] = parentDepth;
             continue;
@@ -532,8 +543,8 @@ void main() {
             //color = vec3(0., pow(iters/10., 5.), 0.); // * vec3(0., 1., 0.);
         }
 
-        //color = vec3(uv, 0.);
-        color = vec3(1.);
+        color = vec3(uv, pow(zdepth/10., 5.));
+        //color = vec3(1.);
 
         if (true || hitmat != MATERIAL_SKY) {
             int myPointOffset = atomicAdd(currentWriteOffset, 1);
