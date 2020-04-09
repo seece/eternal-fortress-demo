@@ -103,6 +103,19 @@ layout(std430) buffer stepBuffer {
     float debug_steps[];
 };
 
+#define USE_ANALYTIC_CONE_STEP 1
+#define USE_HIT_REFINEMENT 0
+#define USE_TREE 1
+
+// This factor how many pixel radiuses of screen space error do we allow
+// in the "near geometry snapping" at the end of "march" loop. Without it
+// the skybox color leaks through with low grazing angles.
+const float SNAP_INFLATE_FACTOR = 3.;
+
+// Ray's maximum travel distance.
+const float MAX_DISTANCE = 1e9;
+
+
 float PIXEL_RADIUS;
 float PROJECTION_PLANE_DIST;
 float NEAR_PLANE;
@@ -111,15 +124,6 @@ float STEP_FACTOR;
 const int PARENT_INDEX  = 16;
 const int CHILD_INDEX = 112;
 int globalMyIdx;
-
-// This factor how many pixel radiuses of screen space error do we allow
-// in the "near geometry snapping" at the end of "march" loop. Without it
-// the skybox color leaks through with low grazing angles.
-const float SNAP_INFLATE_FACTOR = 3.;
-const float DISTANCE_INFLATE_FACTOR = 1.01;
-
-// Ray's maximum travel distance.
-const float MAX_DISTANCE = 1e9;
 
 // mandelbox distance function by Rrola (Buddhi's distance estimation)
 // http://www.fractalforums.com/index.php?topic=2785.msg21412#msg21412
@@ -209,9 +213,12 @@ float depth_march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int
         }
 
         last_t = (t + d) - coneWorldRadius;
-        //last_t = t;
-        //t += (d - coneWorldRadius);
-        t += d;
+
+        #if USE_ANALYTIC_CONE_STEP
+        t = (t + d) * STEP_FACTOR;
+        #else
+        t = t + d;
+        #endif
 
         if (t >= end_t) {
             break;
@@ -278,7 +285,7 @@ float march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int num_i
             candidate_error = error;
         }
 
-        if (!sorFail && error < 2. * PIXEL_RADIUS || t >= end_t) {
+        if (!sorFail && error < 1. * PIXEL_RADIUS || t >= end_t) {
             material = mandelbox_material(ro + t * rd);
             break;
         }
@@ -305,6 +312,7 @@ float march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int num_i
     t = candidate_t;
     p = ro + t * rd;
 
+#if USE_HIT_REFINEMENT
     // See "Enhanced Sphere Tracing" section 3.4. and
     // section 3.1.1 in "Efficient Antialiased Rendering of 3-D Linear Fractals"
     for (int i = 0; i < 2; i++) {
@@ -312,6 +320,7 @@ float march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int num_i
         float e = t * 2. * PIXEL_RADIUS;
         t += scene(ro + t*rd, temp) - e;
     }
+#endif
 
     return t;
 }
@@ -380,8 +389,6 @@ vec2 i2ray(int i, out ivec2 squareCoord, out int parentIdx, out int sideLength)
      return uv;
 }
 
-#define USE_TREE 1
-
 void main() {
     ivec2 res = imageSize(zbuffer).xy;
 
@@ -400,7 +407,7 @@ void main() {
         ivec2 pixelCoord = squareCoord;
 #else
         if (myIdx >= res.x * res.y)
-            return;
+            continue;
         int parentIdx = 0;
         int sideLength = res.x;
         ivec2 pixelCoord = ivec2(myIdx % res.x, myIdx / res.x);
@@ -425,6 +432,10 @@ void main() {
 
 #if USE_TREE
         float parentDepth = jumps[parentIdx];
+        if (parentDepth >= MAX_DISTANCE) {
+            jumps[myIdx] = parentDepth;
+            continue;
+        }
 #else
         float parentDepth = 0.;
 #endif
@@ -437,11 +448,14 @@ void main() {
         PROJECTION_PLANE_DIST = length(rp);
         NEAR_PLANE = length(cam.dir);
         PIXEL_RADIUS = .5 * sqrt(2.) * length(cam.right) / float(sideLength);
+
+#if USE_ANALYTIC_CONE_STEP
         {
             float aperture = 2. * PIXEL_RADIUS;
             float C = sqrt(aperture * aperture + 1.);
             STEP_FACTOR = C / (C - aperture);
         }
+#endif
 
         int hitmat = MATERIAL_SKY;
         vec2 restart;
@@ -453,10 +467,7 @@ void main() {
         if (isLowestLevel) {
             zdepth = march(p, dir, hitmat, restart, 400, iters, parentDepth);
         } else {
-            float tdepth = depth_march(p, dir, hitmat, restart, 400, iters, parentDepth);
-            zdepth = tdepth;
-            //zdepth = dot(dir * tdepth, normalize(cam.dir)) - NEAR_PLANE;
-            //zdepth = tdepth * dot(dir, normalize(cam.dir)) - NEAR_PLANE;
+            zdepth = depth_march(p, dir, hitmat, restart, 400, iters, parentDepth);
         }
 
         if (myIdx == CHILD_INDEX) {
@@ -485,7 +496,7 @@ void main() {
             continue;
         }
 
-        float distance = length(p - cam.pos);
+        float distance = length(p - cam.pos); // TODO replace with t+nearplane dist
 
         vec3 color;
         vec3 skyColor = vec3(0., 0.2*abs(dir.y), 0.5 - dir.y);
@@ -493,11 +504,11 @@ void main() {
         if (hitmat == MATERIAL_SKY) {
             color = skyColor;
         } else {
-            color = vec3(0., pow(zdepth/10., 5.), 0.); // * vec3(0., 1., 0.);
+            color = vec3(1., pow(zdepth/10., 5.), 0.); // * vec3(0., 1., 0.);
             //color = vec3(0., pow(iters/10., 5.), 0.); // * vec3(0., 1., 0.);
         }
 
-        if (true /* DEBUG HACK */ || hitmat != MATERIAL_SKY) {
+        if (hitmat != MATERIAL_SKY) {
             int myPointOffset = atomicAdd(currentWriteOffset, 1);
             myPointOffset %= pointBufferMaxElements;
 
@@ -506,7 +517,7 @@ void main() {
         }
 
         imageStore(zbuffer, pixelCoord, vec4(zdepth));
-        if (zdepth >= 1e9) {
+        if (zdepth >= MAX_DISTANCE) {
             for (int y=-1;y<=1;y++) {
                 for (int x=-1;x<=1;x++) {
                     imageStore(edgebuffer, pixelCoord + ivec2(x, y), vec4(1.));

@@ -785,7 +785,7 @@ int main() {
 						);
 
 						float edgeFactor = imageLoad(edgebuffer, ivec2(gl_FragCoord.xy)).x;
-						edgeFactor = 0.; // DEBUG HACK: edgebuffer disabled
+						//edgeFactor = 0.; // DEBUG HACK: edgebuffer disabled
 
 						uint weightAlphaPacked = sampleWeights[pixelIdx];
 						uint fixedWeight = weightAlphaPacked >> 16;
@@ -804,7 +804,7 @@ int main() {
 						vec3 skyColor = vec3(0., 0.5, 1.);
 						vec3 c = mix(skyColor, color, alpha);
 
-						if (true) {
+						if (false) {
 							int bin = 9;
 							int start = binto(bin);
 
