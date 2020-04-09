@@ -493,10 +493,11 @@ int main() {
 				return vec3(plane + vec2(0.5, 0.5 * cam.aspect), z);
 			}
 
-			void addRGB(uint pixelIdx, uvec3 c) {
-				atomicAdd(colors[3 * pixelIdx + 0], c.r);
-				atomicAdd(colors[3 * pixelIdx + 1], c.g);
-				atomicAdd(colors[3 * pixelIdx + 2], c.b);
+			void addRGB(uint pixelIdx, vec3 c) {
+                c *= 8000;
+				atomicAdd(colors[3 * pixelIdx + 0], uint(c.r));
+				atomicAdd(colors[3 * pixelIdx + 1], uint(c.g));
+				atomicAdd(colors[3 * pixelIdx + 2], uint(c.b));
 			}
 
 			void main()
@@ -543,18 +544,17 @@ int main() {
 
 				int pixelIdx = screenSize.x * y + x;
 				bool isEdge = imageLoad(edgebuffer, ivec2(x, y)).x > 0;
-				float distance = length(pos - cameras[1].pos);
-				float fog = pow(min(1., distance / 15.), 1.0);
-				c = mix(c, vec3(0.1, 0.1, 0.2)*0.1, fog); // DEBUG HACK no fog
 
                 float diffuse = max(0., dot(sunDirection, normal));
                 vec3 toCamera = normalize(-fromCamToPoint);
                 vec3 H = normalize(sunDirection + toCamera);
-                float specular = pow(max(0., dot(normal, H)), 20.);
-                c *= 0.1;
-                c += 0.9 * vec3(specular * sun);
+                float specular = pow(max(0., dot(normal, H)), 50.);
+                //c = mix(c, vec3(specular * sun), 0.95);
                 //c = vec3(specular * sun);
 
+				float distance = length(fromCamToPoint);
+				float fog = pow(min(1., distance / 15.), 1.0);
+				c = mix(c, vec3(0.1, 0.1, 0.2)*0.1, fog); // DEBUG HACK no fog
 
 				c = c / (vec3(1.) + c);
 				c = clamp(c, vec3(0.), vec3(10.));
@@ -564,8 +564,7 @@ int main() {
                 // isEdge = false; // DEBUG HACK: no AA!
 
 				if (!isEdge) {
-					uvec3 icolor = uvec3(weight * 8000 * c);
-					addRGB(pixelIdx, icolor);
+					addRGB(pixelIdx, weight * c);
 					atomicAdd(sampleWeights[pixelIdx], (uint(1000 * weight) << 16) | (255));
 				}
 				else {
@@ -581,10 +580,10 @@ int main() {
 
 					// FIXME: don't write over image boundaries
 					vec3 col = weight * c;
-					addRGB(idx, uvec3(8000 * ws[0] * col));
-					addRGB(idx + 1, uvec3(8000 * ws[1] * col));
-					addRGB(idx + screenSize.x, uvec3(8000 * ws[2] * col));
-					addRGB(idx + screenSize.x + 1, uvec3(8000 * ws[3] * col));
+					addRGB(idx, ws[0] * col);
+					addRGB(idx + 1, ws[1] * col);
+					addRGB(idx + screenSize.x, ws[2] * col);
+					addRGB(idx + screenSize.x + 1, ws[3] * col);
 
 					atomicAdd(sampleWeights[idx], (uint(1000 * weight * ws[0]) << 16) | uint(255 * ws[0]));
 					atomicAdd(sampleWeights[idx + 1], (uint(1000 * weight * ws[1]) << 16) | uint(255 * ws[1]));
