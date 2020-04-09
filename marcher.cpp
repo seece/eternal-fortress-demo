@@ -423,16 +423,31 @@ int main() {
 			};
 
             struct RgbPoint {
-            vec3 xyz;
-            uint normalSpecularSun;
-            vec4 rgba;
+                vec3 xyz;
+                uint normalSpecularSun;
+                vec4 rgba;
             };
+
+            vec3 decodeNormal( vec2 f )
+            {
+                f = f * 2.0 - vec2(1.0);
+
+                // https://twitter.com/Stubbesaurus/status/937994790553227264
+                vec3 n = vec3( f.x, f.y, 1.0 - abs( f.x ) - abs( f.y ) );
+                float t = clamp( -n.z, 0., 1. );
+                //n.xy += n.xy >= 0.0 ? -t : t;
+                n.xy += mix(vec2(t), vec2(-t), greaterThanEqual(n.xy, vec2(0.)));
+                //n.x += n.x >= 0.0 ? -t : t;
+                //n.y += n.y >= 0.0 ? -t : t;
+                return normalize( n );
+            }
 
 			layout(r8) uniform image2D edgebuffer;
 			uniform int pointBufferMaxElements;
 			uniform int numberOfPointsToSplat;
 			uniform ivec2 screenSize;
 			uniform ivec3 noiseOffset;
+            uniform vec3 sunDirection;
 			uniform sampler2DArray noiseTextures;
 
 			vec3 getNoise(ivec2 coord)
@@ -465,8 +480,9 @@ int main() {
 
 			layout(rgba32f) uniform image2D gbuffer;
 
-			vec3 projectPoint(CameraParams cam, vec3 p) {
+			vec3 projectPoint(CameraParams cam, vec3 p, out vec3 fromCamToPoint) {
 				vec3 op = p - cam.pos;
+                fromCamToPoint = op;
 				float n = length(cam.dir);
 				float z = dot(cam.dir, op) / n;
 				vec3 pp = (op * n) / z;
@@ -511,7 +527,8 @@ int main() {
 				if (pos == vec3(0.))
 					return;
 
-				vec3 camSpace = projectPoint(cameras[1], pos);
+                vec3 fromCamToPoint;
+				vec3 camSpace = projectPoint(cameras[1], pos, fromCamToPoint);
 				vec2 screenSpace = camSpace.xy * vec2(screenSize.x, screenSize.y);
 
 				int x = int(screenSpace.x);
@@ -520,11 +537,23 @@ int main() {
 				if (x < 0 || y < 0 || x >= screenSize.x || y >= screenSize.y)
 					return;
 
+                vec4 normalSpecularSun = unpackUnorm4x8(points[index].normalSpecularSun);
+                vec3 normal = decodeNormal(normalSpecularSun.xy);
+                float materialShininess = normalSpecularSun.z;
+                float sun = normalSpecularSun.w;
+
 				int pixelIdx = screenSize.x * y + x;
 				bool isEdge = imageLoad(edgebuffer, ivec2(x, y)).x > 0;
 				float distance = length(pos - cameras[1].pos);
 				float fog = pow(min(1., distance / 15.), 1.0);
 				//c = mix(c, vec3(0.1, 0.1, 0.2)*0.1, fog); // DEBUG HACK no fog
+
+                float diffuse = max(0., dot(sunDirection, normal));
+                vec3 toCamera = normalize(-fromCamToPoint);
+                vec3 H = normalize(sunDirection + toCamera);
+                float specular = pow(max(0., dot(normal, H)), 20.);
+                c = vec3(specular);
+
 
 				c = c / (vec3(1.) + c);
 				c = clamp(c, vec3(0.), vec3(10.));
@@ -585,6 +614,7 @@ int main() {
 		bindBuffer("sampleWeightBuffer", sampleWeightBuffer);
 		glUniform3i("noiseOffset", rand() % 64, rand() % 64, noiseLayer);
 		bindTexture("noiseTextures", noiseTextures);
+		glUniform3f("sunDirection", sunDirection.x, sunDirection.y, sunDirection.z);
 		bindBuffer("cameraArray", cameraData);
 		glDispatchCompute(numberOfPointsToSplat / 128 / 1, 1, 1);
 
@@ -884,6 +914,7 @@ int main() {
 		glUniform3i("noiseOffset", rand() % 64, rand() % 64, noiseLayer);
 		glUniform1f("secs", secs);
 		glUniform2i("screenSize", screenw, screenh);
+		glUniform3f("sunDirection", sunDirection.x, sunDirection.y, sunDirection.z);
 		bindTexture("noiseTextures", noiseTextures);
 		bindBuffer("colorBuffer", colorBuffer);
 		bindImage("edgebuffer", 0, edgebuffer, GL_READ_WRITE, GL_R8); // TODO should be just GL_WRITE

@@ -684,7 +684,7 @@ void main() {
             vec2 packedNormal = encodeNormal(normal);
 
             points[myPointOffset].xyz = p;
-            points[myPointOffset].normalSpecularSun = packUnorm4x8(vec4(packedNormal, 0., 0.));
+            points[myPointOffset].normalSpecularSun = packUnorm4x8(vec4(packedNormal, 0.5, sun));
             points[myPointOffset].rgba = vec4(color, 1.);
         }
 
