@@ -50,7 +50,8 @@ struct CameraParams {
 };
 
 struct RgbPoint {
-    vec4 xyzw;
+    vec3 xyz;
+    uint normalSpecularSun;
     vec4 rgba;
 };
 
@@ -444,6 +445,44 @@ uvec2 i2gridCoord(int i, out int idim) {
     return z2xy(uint(z));
 }
 
+vec2 octWrap( vec2 v )
+{
+    //return ( 1.0 - abs( v.yx ) ) * ( v.xy >= 0.0 ? 1.0 : -1.0 );
+
+    //vec2 v2 = vec2(
+    //    v.x >= 0. ? 1. : -1.,
+    //    v.y >= 0. ? 1. : -1.);
+    vec2 v2 = mix(vec2(-1.), vec2(1.), greaterThanEqual(v.xy, vec2(0.)));
+    return ( 1.0 - abs( v.yx ) ) * v2;
+}
+
+vec2 encodeNormal( vec3 n )
+{
+    n /= ( abs( n.x ) + abs( n.y ) + abs( n.z ) );
+    //n.xy = n.z >= 0.0 ? n.xy : OctWrap( n.xy );
+    // vec2 nw = OctWrap( n.xy );
+    // n.x = n.z >= 0.0 ? n.x : nw.x;
+    // n.y = n.z >= 0.0 ? n.y : nw.y;
+
+    n.xy = mix(octWrap( n.xy ), n.xy, bvec2(n.z >= 0.));
+    n.xy = n.xy * 0.5 + vec2(0.5);
+    return n.xy;
+}
+
+vec3 decodeNormal( vec2 f )
+{
+    f = f * 2.0 - vec2(1.0);
+
+    // https://twitter.com/Stubbesaurus/status/937994790553227264
+    vec3 n = vec3( f.x, f.y, 1.0 - abs( f.x ) - abs( f.y ) );
+    float t = clamp( -n.z, 0., 1. );
+    //n.xy += n.xy >= 0.0 ? -t : t;
+    n.xy += mix(vec2(t), vec2(-t), greaterThanEqual(n.xy, vec2(0.)));
+    //n.x += n.x >= 0.0 ? -t : t;
+    //n.y += n.y >= 0.0 ? -t : t;
+    return normalize( n );
+}
+
 vec2 i2ray(int i, out ivec2 squareCoord, out int parentIdx, out int sideLength)
 {
     int b = tobin(i);
@@ -638,18 +677,20 @@ void main() {
 
             //color = vec3(sun);
             //color = vec3(0.5)+.5*cos( 10*vec3(iters)/600.  + vec3(0., 0.5, 1.));
+
+            int myPointOffset = atomicAdd(currentWriteOffset, 1);
+            myPointOffset %= pointBufferMaxElements;
+
+            vec2 packedNormal = encodeNormal(normal);
+
+            points[myPointOffset].xyz = p;
+            points[myPointOffset].normalSpecularSun = packUnorm4x8(vec4(packedNormal, 0., 0.));
+            points[myPointOffset].rgba = vec4(color, 1.);
         }
 
         //color = vec3(uv, pow(zdepth/10., 5.));
         //color = vec3(1.);
 
-        if (hitmat != MATERIAL_SKY) {
-            int myPointOffset = atomicAdd(currentWriteOffset, 1);
-            myPointOffset %= pointBufferMaxElements;
-
-            points[myPointOffset].xyzw = vec4(p, 0.);
-            points[myPointOffset].rgba = vec4(color, 1.);
-        }
 
         imageStore(zbuffer, pixelCoord, vec4(zdepth));
         if (zdepth >= MAX_DISTANCE) {

@@ -70,7 +70,8 @@ static void setWrapToClamp(GLuint tex) {
 }
 
 struct RgbPoint {
-	vec4 xyzw;
+	vec3 xyz;
+	uint32_t normalSpecularSun;
 	vec4 rgba;
 };
 
@@ -421,10 +422,11 @@ int main() {
 				float padding3;
 			};
 
-			struct RgbPoint {
-				vec4 xyzw;
-				vec4 rgba;
-			};
+            struct RgbPoint {
+            vec3 xyz;
+            uint normalSpecularSun;
+            vec4 rgba;
+            };
 
 			layout(r8) uniform image2D edgebuffer;
 			uniform int pointBufferMaxElements;
@@ -501,15 +503,15 @@ int main() {
 				};
 
 				unsigned int index = (baseIdx + invocationIdx) % pointBufferMaxElements;
-				vec4 pos = points[index].xyzw;
+				vec3 pos = points[index].xyz;
 				vec4 color = points[index].rgba;
 				vec3 c = color.rgb;
 
 				// Raymarcher never produces pure (0, 0, 0) hits.
-				if (pos == vec4(0.))
+				if (pos == vec3(0.))
 					return;
 
-				vec3 camSpace = projectPoint(cameras[1], pos.xyz);
+				vec3 camSpace = projectPoint(cameras[1], pos);
 				vec2 screenSpace = camSpace.xy * vec2(screenSize.x, screenSize.y);
 
 				int x = int(screenSpace.x);
@@ -520,9 +522,9 @@ int main() {
 
 				int pixelIdx = screenSize.x * y + x;
 				bool isEdge = imageLoad(edgebuffer, ivec2(x, y)).x > 0;
-				float distance = length(pos.xyz - cameras[1].pos);
+				float distance = length(pos - cameras[1].pos);
 				float fog = pow(min(1., distance / 15.), 1.0);
-				c = mix(c, vec3(0.1, 0.1, 0.2)*0.1, fog);
+				//c = mix(c, vec3(0.1, 0.1, 0.2)*0.1, fog); // DEBUG HACK no fog
 
 				c = c / (vec3(1.) + c);
 				c = clamp(c, vec3(0.), vec3(10.));
