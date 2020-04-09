@@ -51,7 +51,8 @@ struct RgbPoint {
 };
 
 uniform int pointBufferMaxElements;
-uniform int jumpBufferMaxElements;
+//uniform int jumpBufferMaxElements;
+uniform int rayIndexBufferMaxElements;
 
 layout(std140) uniform cameraArray {
     CameraParams cameras[2];
@@ -69,6 +70,10 @@ layout(std430) buffer pointBuffer {
 
 layout(std430) buffer jumpBuffer {
     float jumps[];
+};
+
+layout(std430) buffer rayIndexBuffer {
+    int rayIndices[];
 };
 
 layout(std430) buffer uvBuffer {
@@ -105,7 +110,7 @@ layout(std430) buffer stepBuffer {
 
 #define USE_ANALYTIC_CONE_STEP 1
 #define USE_HIT_REFINEMENT 0
-#define USE_TREE 0
+#define USE_TREE 1
 
 // This factor how many pixel radiuses of screen space error do we allow
 // in the "near geometry snapping" at the end of "march" loop. Without it
@@ -358,6 +363,14 @@ uvec2 z2xy(uint z)
     return uvec2(z2x_1(z), z2x_1(z>>1));
 }
 
+uvec2 i2gridCoord(int i, out int idim) {
+    int b = tobin(i);
+    int start = binto(b);
+    int z = i - start;
+    idim = 1 << b;
+    return z2xy(uint(z));
+}
+
 vec2 i2ray(int i, out ivec2 squareCoord, out int parentIdx, out int sideLength)
 {
     int b = tobin(i);
@@ -394,18 +407,28 @@ void main() {
 
     const int maxRayIndex = res.x * res.y;
 
-    while (nextRayIndex < jumpBufferMaxElements) {
-        int myIdx = atomicAdd(nextRayIndex, 1);
-        if (myIdx >= jumpBufferMaxElements)
-            return;
-        globalMyIdx = myIdx;
+    while (nextRayIndex < rayIndexBufferMaxElements) {
+        int arrayIdx = atomicAdd(nextRayIndex, 1);
 #if USE_TREE
+        if (arrayIdx >= rayIndexBufferMaxElements)
+            return;
+        int myIdx = rayIndices[arrayIdx];
+        globalMyIdx = myIdx;
+        int idim;
         int parentIdx = -2, sideLength = -1;
+        //uvec2 ic = i2gridCoord(myIdx, idim);
+        //if (ic.y > idim * cameras[1].aspect)
+        //    continue;
+
         ivec2 squareCoord;
         vec2 squareUV = i2ray(myIdx, squareCoord, parentIdx, sideLength);
+        //squareUV.xy *= vec2(2048 / 1280., 2048 / 720.);
+        squareUV.x *= 2048 / 1280.;
+        squareUV.y *= 2048 / 1280.;
 
-        ivec2 pixelCoord = squareCoord;
+        ivec2 pixelCoord = ivec2(squareUV * res.xy);
 #else
+        int myIdx = arrayIdx;
         if (myIdx >= res.x * res.y)
             continue;
         int parentIdx = 0;
@@ -414,6 +437,7 @@ void main() {
         vec2 squareUV = (vec2(0.5) / vec2(sideLength)) + pixelCoord / vec2(sideLength);
 #endif
 
+        CameraParams cam = cameras[1];
 
         srand(frame, uint(pixelCoord.x), uint(pixelCoord.y));
         jenkins_mix();
@@ -432,6 +456,7 @@ void main() {
 
 #if USE_TREE
         float parentDepth = jumps[parentIdx];
+        //parentDepth = 0.; // HACK!!!
         if (parentDepth >= MAX_DISTANCE) {
             jumps[myIdx] = parentDepth;
             continue;
@@ -440,7 +465,6 @@ void main() {
         float parentDepth = 0.;
 #endif
 
-        CameraParams cam = cameras[1];
         vec3 p, dir;
         getCameraProjection(cam, uv, p, dir);
 
@@ -508,9 +532,10 @@ void main() {
             //color = vec3(0., pow(iters/10., 5.), 0.); // * vec3(0., 1., 0.);
         }
 
-        color = vec3(uv, 0.);
+        //color = vec3(uv, 0.);
+        color = vec3(1.);
 
-        if (hitmat != MATERIAL_SKY) {
+        if (true || hitmat != MATERIAL_SKY) {
             int myPointOffset = atomicAdd(currentWriteOffset, 1);
             myPointOffset %= pointBufferMaxElements;
 

@@ -110,7 +110,7 @@ int dim2nodecount(int dim)
 	return binto(int(ceil(log2(dim))) + 1);
 }
 
-constexpr int MAX_POINT_COUNT = 1. * 1024 * 1024;
+constexpr int MAX_POINT_COUNT = 5. * screenw * screenh;
 
 int main() {
 
@@ -208,6 +208,7 @@ int main() {
 	Buffer radiusbuffer;
 	Buffer debugBuffer;
 	Buffer stepBuffer;
+	Buffer rayIndexBuffer;
 
 	//Framebuffer fbo;
 	//glBindFramebuffer(GL_FRAMEBUFFER, fbo);
@@ -237,11 +238,6 @@ int main() {
 	glNamedBufferStorage(sampleWeightBuffer, screenw * screenh * sizeof(int), NULL, 0);
 	glNamedBufferStorage(debugBuffer, 1024 * sizeof(int), NULL, 0);
 	glNamedBufferStorage(stepBuffer, 50000 * sizeof(float), NULL, 0);
-	
-	int jumpBufferMaxElements = dim2nodecount(max(screenw, screenh));
-	glNamedBufferStorage(jumpbuffer, jumpBufferMaxElements * sizeof(float), NULL, 0);
-	glNamedBufferStorage(radiusbuffer, jumpBufferMaxElements * sizeof(float), NULL, 0);
-	glNamedBufferStorage(uvbuffer, 2 * jumpBufferMaxElements * sizeof(float), NULL, 0);
 
 	int zero = 0;
 	glClearNamedBufferData(pointBufferHeader, GL_R32I, GL_RED_INTEGER, GL_INT, &zero);
@@ -264,9 +260,47 @@ int main() {
 	printf("pointBuffer size: %" PRId64 " bytes = %.3f MiB\n", pointBufferSize, pointBufferSize / 1024. / 1024.);
 	printf("pointBufferMaxElements: %d\n", pointBufferMaxElements);
 
+	int jumpBufferMaxElements = dim2nodecount(max(screenw, screenh));
+	int rayIndexBufferMaxElements = 0;
+
+    {
+		std::vector<int> indexArray;
+        int maxdim = 1 << (int(log2(max(screenw, screenh))) + 1);
+        vec2 scale = (float(maxdim) / float(screenw), float(maxdim) / float(screenw));
+		float aspect = float(screenw) / float(screenh);
+
+        for (int i = 0; i < jumpBufferMaxElements; i++) {
+            int b = tobin(i);
+            int start = binto(b);
+            int z = i - start;
+            uvec2 coord = z2xy(uint(z));
+            int idim = 1 << b;
+            int size = idim * idim;
+            float dim = float(idim);
+
+            vec2 uv = vec2(0.5/dim) + vec2(coord) / vec2(dim);
+			uv *= scale;
+
+			// TODO create parent bitmask and compact the list as indices?
+
+			float pixelSize = 1.0 / dim;
+			if (uv.x <= 1.0 - pixelSize && uv.y <= 1.0 - pixelSize) {
+				indexArray.push_back(i);
+			}
+        }
+		rayIndexBufferMaxElements = indexArray.size();
+		printf("rayIndexBuffer elements: %d\n", rayIndexBufferMaxElements);
+		glNamedBufferStorage(rayIndexBuffer, indexArray.size() * sizeof(int), indexArray.data(), 0);
+    }
+
+	glNamedBufferStorage(jumpbuffer, jumpBufferMaxElements * sizeof(float), NULL, 0);
+	glNamedBufferStorage(radiusbuffer, jumpBufferMaxElements * sizeof(float), NULL, 0);
+	glNamedBufferStorage(uvbuffer, 2 * jumpBufferMaxElements * sizeof(float), NULL, 0);
+
 	GLint64 jumpBufferSize = -1;
 	glGetNamedBufferParameteri64v(jumpbuffer, GL_BUFFER_SIZE, &jumpBufferSize);
 	printf("jumpBuffer size: %" PRId64 " bytes = %.3f MiB\n", jumpBufferSize, jumpBufferSize / 1024. / 1024.);
+
 
 	while (loop()) // loop() stops if esc pressed or window closed
 	{
@@ -298,10 +332,12 @@ int main() {
 		glUniform1f("secs", secs);
 		glUniform1i("pointBufferMaxElements", pointBufferMaxElements);
 		glUniform1i("jumpBufferMaxElements", jumpBufferMaxElements);
+		glUniform1i("rayIndexBufferMaxElements", rayIndexBufferMaxElements);
 		bindBuffer("cameraArray", cameraData);
 		bindBuffer("pointBufferHeader", pointBufferHeader);
 		bindBuffer("pointBuffer", pointBuffer);
 		bindBuffer("jumpBuffer", jumpbuffer);
+		bindBuffer("rayIndexBuffer", rayIndexBuffer);
 		bindBuffer("uvBuffer", uvbuffer);
 		bindBuffer("radiusBuffer", radiusbuffer);
 		bindBuffer("debugBuffer", debugBuffer);
@@ -314,9 +350,7 @@ int main() {
 		bindImage("samplebuffer", 0, samplebuffer, GL_WRITE_ONLY, SAMPLE_BUFFER_TYPE);
 		bindImage("jitterbuffer", 0, jitterbuffer, GL_WRITE_ONLY, JITTER_BUFFER_TYPE);
 
-		//glDispatchCompute((screenw+17)/16, (screenh+17)/16, 1); // round up and add extra context
-		glDispatchCompute(screenw/16, screenh/16, 1); // TODO scale to max GPU occupancy?
-		//glDispatchCompute(10, 20, 1); 
+		glDispatchCompute(2 * screenw/16, 2 * screenh/16, 1); // TODO scale to max GPU occupancy?
 
 		// we're writing to an image in a shader, so we should have a barrier to ensure the writes finish
 		// before the next shader call (wasn't an issue on my hardware in this case, but you should always make sure
@@ -476,6 +510,7 @@ int main() {
 				c = clamp(c, vec3(0.), vec3(10.));
 
 				float weight = max(0.1, min(1e3, 1. / (pow(camSpace.z / 3., 2.) + 0.001)));
+                weight = 0.5;
 
 				isEdge = false; // DEBUG: edge smoothing disabled for performance comparisons
 
@@ -803,7 +838,7 @@ int main() {
 						if (edgeFactor == 0.) alpha = 1.;
 						vec3 color = vec3(icolor) / 10000.0;
 						if (weight > 0.) {
-							color /= weight;
+							//color /= weight; // HACK: don't divide
 						}
 						
 						vec3 skyColor = vec3(0., 0.5, 1.);
@@ -881,7 +916,8 @@ int main() {
                             //c.rgb = vec3(parent_fpos/80., 0.);
 						}
 
-						outColor = vec4(linearToSRGB(c.rgb), 1.);
+						//outColor = vec4(linearToSRGB(c.rgb), 1.);
+						outColor = vec4(c.rgb, 1.); // HACK: no gamma
 						//outColor= vec4(vec3(alpha == 0.), 1.);
 
 						vec3 noise = getNoise(ivec2(gl_FragCoord.xy));
