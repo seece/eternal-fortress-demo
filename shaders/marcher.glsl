@@ -33,6 +33,8 @@ uniform vec2 screenBoundary;
 uniform vec2 cameraJitter;
 uniform vec3 sunDirection;
 uniform vec3 sunColor;
+uniform samplerCube skybox;
+uniform sampler2D skyIrradiance;
 
 layout(r32f) uniform image2D zbuffer;
 layout(r8) uniform image2D edgebuffer;
@@ -494,6 +496,22 @@ vec3 decodeNormal( vec2 f )
     return normalize( n );
 }
 
+// https://learnopengl.com/PBR/IBL/Diffuse-irradiance
+const vec2 invAtan = vec2(0.1591, 0.3183);
+vec2 dirToSpherical(vec3 direction)
+{
+    vec2 uv = vec2(atan(direction.z, direction.x), asin(direction.y));
+    uv *= invAtan;
+    uv += 0.5;
+    return uv;
+}
+
+vec3 sampleSky(vec3 dir) {
+    return texture(skyIrradiance, dirToSpherical(dir)).rgb;
+}
+
+
+
 vec2 i2ray(int i, out ivec2 squareCoord, out int parentIdx, out int sideLength)
 {
     int b = tobin(i);
@@ -682,10 +700,13 @@ void main() {
             float shininess = mod(hitmat * 3.3, 1.0);
 
             color = base * sun * vec3(facing);
-            vec3 skycolor = vec3(0.5, 0.7, 1.0);
+            vec3 skycolor = sampleSky(roughNormal); // vec3(0.5, 0.7, 1.0);
             //vec3 suncolor = vec3(1., 0.8, 0.5);
             color = base * (ambient * skycolor + facing * sun * sunColor);
             color = clamp(color, vec3(0.), vec3(2.));
+            //color *= 0.5;
+            //color *= 0.;
+            //shininess = 0.;
 
             //color = vec3(sun);
             //color = vec3(0.5)+.5*cos( 10*vec3(iters)/600.  + vec3(0., 0.5, 1.));

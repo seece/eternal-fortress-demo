@@ -209,6 +209,17 @@ int main() {
 
 	};
 	Texture<GL_TEXTURE_2D_ARRAY> noiseTextures = loadImageArray(noisePaths, sizeof(noisePaths)/sizeof(std::wstring));
+	//Texture<GL_TEXTURE_2D> skyboxTexture = loadImage(L"assets/MonValley_A_LookoutPoint_8k.jpg");
+	Texture<GL_TEXTURE_2D> dayIrradiance = loadImage(L"assets/champagne/iem.png");
+	std::wstring cubePaths[] = {
+		L"assets/champagne/_posx.png",
+		L"assets/champagne/_negx.png",
+		L"assets/champagne/_negy.png",
+		L"assets/champagne/_posy.png",
+		L"assets/champagne/_posz.png",
+		L"assets/champagne/_negz.png"
+	};
+	Texture<GL_TEXTURE_CUBE_MAP> skyboxCubemap = loadCubeMap(cubePaths, sizeof(cubePaths) / sizeof(std::wstring), true);
 
 	Texture<GL_TEXTURE_2D_ARRAY> abuffer;
 	Texture<GL_TEXTURE_2D> gbuffer;
@@ -367,6 +378,8 @@ int main() {
 		bindBuffer("stepBuffer", stepBuffer);
 		glUniform3i("noiseOffset", rand() % 64, rand() % 64, noiseLayer);
 		bindTexture("noiseTextures", noiseTextures);
+		bindTexture("skybox", skyboxCubemap);
+		bindTexture("skyIrradiance", dayIrradiance);
 		//bindImage("gbuffer", 0, gbuffer, GL_WRITE_ONLY, GL_RGBA32F);
 		bindImage("zbuffer", 0, zbuffer, GL_WRITE_ONLY, GL_R32F);
 		bindImage("edgebuffer", 0, edgebuffer, GL_WRITE_ONLY, GL_R8);
@@ -512,9 +525,9 @@ int main() {
             int sampleNum = 0;
 
 			void addRGB(uint pixelIdx, vec3 c, ivec2 pix) {
-                vec3 scale = vec3(100, 200, 50);
+                vec3 scale = vec3(100, 100, 50);
                 c = pow(c, vec3(0.7));
-                //c += (vec3(0.7)/scale)*(getNoise(pix, sampleNum++) - vec3(.55));
+                c += (vec3(0.5)/scale)*(getNoise(pix, sampleNum++) - vec3(.55));
                 c = vec3(.5) + c * scale;
                 uint c0 = uint(c.g);
                 uint c1 = uint(c.r);
@@ -583,7 +596,8 @@ int main() {
 				c = c / (vec3(1.) + c);
 				c = clamp(c, vec3(0.), vec3(1.));
 
-				float weight = max(0.1, min(1e3, 1. / (pow(camSpace.z / 3., 2.) + 0.001)));
+				//float weight = max(0.1, min(1e3, 1. / (pow(camSpace.z / 3., 2.) + 0.001)));
+				float weight = max(0.1, min(1e2, 1. / (pow(camSpace.z / 3., 2.) + 0.001)));
 
                 vec2 w = fract(screenSpace);
                 vec4 ws = vec4(
@@ -779,6 +793,7 @@ int main() {
 					uniform int frame;
 					uniform ivec3 noiseOffset;
 					uniform sampler2DArray noiseTextures;
+                    uniform samplerCube skybox;
                     uniform vec3 sunDirection;
                     uniform vec3 sunColor;
 
@@ -803,19 +818,31 @@ int main() {
 							ivec3((coord.x + noiseOffset.x) % 64, (coord.y + noiseOffset.y) % 64, (noiseOffset.z + ofs) % 64), 0).rgb;
 					}
 
+                    // https://learnopengl.com/PBR/IBL/Diffuse-irradiance
+                    const vec2 invAtan = vec2(0.1591, 0.3183);
+                    vec2 dirToSpherical(vec3 direction)
+                    {
+                        vec2 uv = vec2(atan(direction.z, direction.x), asin(direction.y));
+                        uv *= invAtan;
+                        uv += 0.5;
+                        return uv;
+                    }
+
                     vec3 sampleSky(vec3 dir) {
-                        vec3 sundir = sunDirection;
-                        sundir.xz *= -1;
-                        float d = dot(dir, sundir);
+                        vec3 c = texture(skybox, dir).rgb;
+                        c = 3.*pow(c, vec3(1.5));
+
+                        float d = dot(dir, sunDirection);
                         float horizon = dir.y;
                         vec3 base = max(0., horizon) * vec3(0., 0.01, 0.03)
                                     + max(0., -horizon) * .1 * vec3(0.6, 0.0, 1.0)
                                     + max(0., pow(1.-abs(horizon), 16.)) * vec3(0.1, 0.00, 0.)
                                     ;
-                        float disc = 10. * pow(max(0., (d-0.12)), 1000.);
-                        float shine = pow(max(0., d*.8), 20.);
-                        return base + vec3(disc) + shine * sunColor;
-                        //return vec3(abs(dot(dir, vec3(1.0, 1.0, 0.))));
+                        float disc = 50. * pow(max(0., (d)), 1000.);
+                        float shine =  pow(max(0., d*.8), 20.);
+                        //return vec3(disc);
+                        //return c * (base + vec3(disc) + shine * sunColor);
+                        return c;
                     }
 
                     void main() {
@@ -839,7 +866,7 @@ int main() {
                                 (packedColor & 0x7FF000) >> 12,
                                 packedColor & 0xfff,
                                 (packedColor & 0xff800000) >> 23);
-                        color /= vec3(100., 200., 50.);
+                        color /= vec3(100., 100., 50.);
                         color = pow(color, vec3(1./0.7));
 
                         // "color" is now Reinhard tone mapped
@@ -879,6 +906,7 @@ int main() {
 		glUniform3f("sunDirection", sunDirection.x, sunDirection.y, sunDirection.z);
 		glUniform3f("sunColor", sunColor.x, sunColor.y, sunColor.z);
 		bindTexture("noiseTextures", noiseTextures);
+		bindTexture("skybox", skyboxCubemap);
 		bindBuffer("colorBuffer", colorBuffer);
 		bindImage("edgebuffer", 0, edgebuffer, GL_READ_WRITE, GL_R8); // TODO should be just GL_WRITE
 		bindBuffer("sampleWeightBuffer", sampleWeightBuffer);
