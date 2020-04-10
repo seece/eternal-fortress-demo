@@ -685,7 +685,7 @@ void main() {
             vec3 skycolor = vec3(0.5, 0.7, 1.0);
             //vec3 suncolor = vec3(1., 0.8, 0.5);
             color = base * (ambient * skycolor + facing * sun * sunColor);
-            color = clamp(color, vec3(0.), vec3(10.));
+            color = clamp(color, vec3(0.), vec3(2.));
 
             //color = vec3(sun);
             //color = vec3(0.5)+.5*cos( 10*vec3(iters)/600.  + vec3(0., 0.5, 1.));

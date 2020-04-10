@@ -42,10 +42,11 @@ static bool showDebugInfo = false;
 
 static void cameraPath(float t, CameraParameters& cam)
 {
-	float tt = t * 0.1f / 8.;
+	float tt = t * 0.1f;
 	//cam.pos = vec3(0.5f*sin(tt), 0.f, 6.f + 0.5f*cos(tt));
 	cam.pos = vec3(0. + 2.0 * sin(tt), -4., 7.f + 0.1f*cos(tt));
-	cam.dir = normalize(vec3(0.5f*cos(tt*0.5f), 0.3 + 0.2f*sin(tt), -1.f));
+	// cam.dir = normalize(vec3(0.5f*cos(tt*0.5f), 0.3 + 0.2f*sin(tt), -1.f));
+	cam.dir = normalize(vec3(0.9f*cos(tt*0.5f), 0.3 + 0.9f*sin(tt), -1.f));
 	//cam.pos = vec3(0., 0., 4.);
 	//cam.dir = vec3(0., 0., -1.);
 	cam.right = normalize(cross(cam.dir, vec3(0.f, 1.f, 0.f)));
@@ -54,7 +55,7 @@ static void cameraPath(float t, CameraParameters& cam)
 	cam.aspect = float(screenw) / float(screenh);
 	
 	float nearplane = 0.1f;
-	float zoom = 1.0f;
+	float zoom = 0.5f;
 	cam.dir *= nearplane;
 	cam.right *= nearplane;
 	cam.right /= zoom;
@@ -318,9 +319,7 @@ int main() {
 	{
 		// timestamp objects make gl queries at those locations; you can substract them to get the time
 		TimeStamp start;
-		//float secs = getTime(); //fmod(frame / 60.f, 2.0) + 21.;
-		float secs = fmod(frame / 60.f, 2.0) + 21.;
-		//secs = 2.0;
+		float secs = getTime(); //fmod(frame / 60.f, 2.0) + 21.;
 		float futureInterval = 0. / 60.f;
 		cameraPath(secs + futureInterval, cameras[1]);
 		glNamedBufferSubData(cameraData, 0, sizeof(cameras), &cameras);
@@ -513,7 +512,7 @@ int main() {
             int sampleNum = 0;
 
 			void addRGB(uint pixelIdx, vec3 c, ivec2 pix) {
-                vec3 scale = vec3(100, 200, 75);
+                vec3 scale = vec3(100, 200, 50);
                 c = pow(c, vec3(0.7));
                 //c += (vec3(0.7)/scale)*(getNoise(pix, sampleNum++) - vec3(.55));
                 c = vec3(.5) + c * scale;
@@ -576,8 +575,8 @@ int main() {
                 //c = vec3(specular * sun);
 
 				float distance = length(fromCamToPoint);
-				float fog = pow(min(1., distance / 20.), 1.0);
-				//c = mix(c, vec3(0.1, 0.1, 0.2)*0.1, fog);
+				float fog = pow(min(1., distance / 20.), 1.5);
+				c = mix(c, vec3(0.1, 0.1, 0.2)*0.1, fog);
 
                 //c = vec3(.5) + .5*sin(pos*1.4);
 
@@ -804,100 +803,23 @@ int main() {
 							ivec3((coord.x + noiseOffset.x) % 64, (coord.y + noiseOffset.y) % 64, (noiseOffset.z + ofs) % 64), 0).rgb;
 					}
 
-					// Maps a ray index "i" into a bin index.
-					int tobin(int i)
-					{
-						return findMSB(3 * i + 1) >> 1;
-					}
-
-					// Maps a bin index into a starting ray index. Inverse of "tobin(i)."
-					int binto(int b)
-					{
-						// Computes (4**b - 1) / 3
-						// FIXME: replace with a lookup table
-						int product = 1;
-						for (int i = 0; i < b; i++)
-							product *= 4;
-						return (product - 1) / 3;
-					}
-
-					uint z2x_1(uint x)
-					{
-						x = x & 0x55555555;
-						x = (x | (x >> 1)) & 0x33333333;
-						x = (x | (x >> 2)) & 0x0F0F0F0F;
-						x = (x | (x >> 4)) & 0x00FF00FF;
-						x = (x | (x >> 8)) & 0x0000FFFF;
-						return x;
-					}
-
-					// Maps 32-bit Z-order index into 16-bit (x, y)
-					uvec2 z2xy(uint z)
-					{
-						return uvec2(z2x_1(z), z2x_1(z >> 1));
-					}
-
-					/**
-					* Interleave lower 16 bits of x and y, so the bits of x
-					* are in the even positions and bits from y in the odd;
-					* z gets the resulting 32-bit Morton Number.
-					* x and y must initially be less than 65536.
-					*
-					* Source: http://graphics.stanford.edu/~seander/bithacks.html
-					*/
-					uint xy2z(uint x, uint y) {
-						uint B[] = { 0x55555555, 0x33333333, 0x0F0F0F0F, 0x00FF00FF };
-						uint S[] = { 1, 2, 4, 8 };
-
-						x = (x | (x << S[3])) & B[3];
-						x = (x | (x << S[2])) & B[2];
-						x = (x | (x << S[1])) & B[1];
-						x = (x | (x << S[0])) & B[0];
-
-						y = (y | (y << S[3])) & B[3];
-						y = (y | (y << S[2])) & B[2];
-						y = (y | (y << S[1])) & B[1];
-						y = (y | (y << S[0])) & B[0];
-
-						//uint z = x | (y << 1);
-						return x | (y << 1);
-					}
-
-                    vec2 i2ray(int i, out ivec2 squareCoord, out int parentIdx, out int sideLength)
-                    {
-                        int b = tobin(i);
-                        int start = binto(b);
-                        int z = i - start;
-                        uvec2 coord = z2xy(uint(z));
-                        int idim = 1 << b;
-                        int size = idim * idim;
-                        float dim = float(idim);
-
-                        int parent_size = size / 4;
-                        int parent = int(start - parent_size) + (z/4);
-
-                        squareCoord = ivec2(coord + vec2(.5));
-                        parentIdx = parent;
-                        sideLength = idim;
-
-                        vec2 uv = vec2(0.5/dim) + coord / vec2(dim);
-
-                        return uv;
-                    }
-
-                    // https://software.intel.com/en-us/node/503873
-                    vec3 YCoCg_RGB(vec3 c)
-                    {
-                        return clamp(vec3(
-                                    c.x + c.y - c.z,
-                                    c.x + c.z,
-                                    c.x - c.y - c.z
-                                    ), vec3(0.), vec3(1.));
+                    vec3 sampleSky(vec3 dir) {
+                        vec3 sundir = sunDirection;
+                        sundir.xz *= -1;
+                        float d = dot(dir, sundir);
+                        float horizon = dir.y;
+                        vec3 base = max(0., horizon) * vec3(0., 0.01, 0.03)
+                                    + max(0., -horizon) * .1 * vec3(0.6, 0.0, 1.0)
+                                    + max(0., pow(1.-abs(horizon), 16.)) * vec3(0.1, 0.00, 0.)
+                                    ;
+                        float disc = 10. * pow(max(0., (d-0.12)), 1000.);
+                        float shine = pow(max(0., d*.8), 20.);
+                        return base + vec3(disc) + shine * sunColor;
+                        //return vec3(abs(dot(dir, vec3(1.0, 1.0, 0.))));
                     }
 
                     void main() {
                         int pixelIdx = screenSize.x * int(gl_FragCoord.y) + int(gl_FragCoord.x);
-
                         uvec3 icolor = uvec3(
                                 colors[3 * pixelIdx + 0],
                                 colors[3 * pixelIdx + 1],
@@ -910,30 +832,36 @@ int main() {
                         float weight = float(fixedWeight) / 1000.;
                         float alpha = float(fixedAlpha) / 255.;
 
-                        alpha = min(1., alpha/5.);
+                        alpha = pow(min(1., alpha/3.), 0.5);
 
                         uint packedColor = colors[pixelIdx];
                         vec3 color = vec3(
                                 (packedColor & 0x7FF000) >> 12,
                                 packedColor & 0xfff,
                                 (packedColor & 0xff800000) >> 23);
-                        color /= vec3(100., 200., 75.);
-                        color = pow(color, vec3(1./0.8));
+                        color /= vec3(100., 200., 50.);
+                        color = pow(color, vec3(1./0.7));
 
                         // "color" is now Reinhard tone mapped
-
 
                         if (weight > 0.) {
                             color /= weight;
                         }
 
-                        vec3 skyColor = vec3(0., 0.5, 1.);
+
+                        vec3 p, dir;
+                        vec2 uv = vec2(gl_FragCoord.x, gl_FragCoord.y) / screenSize;
+                        uv.y /= cameras[1].aspect;
+                        getCameraProjection(cameras[1], uv, p, dir);
+
+                        vec3 skyColor = sampleSky(dir);
                         vec3 c = mix(skyColor, color, alpha);
 
+                        vec3 srgb = linearToSRGB(c.rgb);
+                        vec3 noise = 1./255. * getNoise(ivec2(gl_FragCoord.xy));
+                        srgb += noise;
+                        outColor = vec4(srgb, 1.);
 
-                        outColor = vec4(linearToSRGB(c.rgb), 1.);
-
-                        vec3 noise = getNoise(ivec2(gl_FragCoord.xy));
 
                         // Clear the accumulation buffer
                         colors[pixelIdx] = 0;
