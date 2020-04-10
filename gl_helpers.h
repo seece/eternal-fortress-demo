@@ -134,6 +134,7 @@ protected:
 Texture<GL_TEXTURE_2D> loadImage(const std::string& path);
 Texture<GL_TEXTURE_2D> loadImage(const std::wstring& path);
 Texture<GL_TEXTURE_2D_ARRAY> loadImageArray(const std::wstring* paths, int count);
+Texture<GL_TEXTURE_CUBE_MAP> loadCubeMap(const std::wstring* paths, int count, bool srgb=true);
 
 // todo: stringviews?
 #define uniform_copy(postfix, postfix_v, type)\

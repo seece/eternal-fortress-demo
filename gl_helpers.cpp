@@ -158,6 +158,59 @@ Texture<GL_TEXTURE_2D> loadImage(const std::wstring& path) {
 	return result;
 }
 
+Texture<GL_TEXTURE_CUBE_MAP> loadCubeMap(const std::wstring* paths, int count, bool srgb) {
+	using namespace Gdiplus;
+	assert(count == 6);
+	ULONG_PTR token;
+	GdiplusStartup(&token, &GdiplusStartupInput(), nullptr);
+
+	Texture<GL_TEXTURE_CUBE_MAP> result;
+	glBindTexture(GL_TEXTURE_CUBE_MAP, result);
+
+	int width = 0, height = 0;
+
+	for (int i = 0; i < count; i++)
+	{
+		Image image(paths[i].c_str());
+		image.RotateFlip(RotateNoneFlipY);
+		const Rect r(0, 0, image.GetWidth(), image.GetHeight());
+		BitmapData data = {};
+		((Bitmap*)&image)->LockBits(&r, ImageLockModeRead, PixelFormat24bppRGB, &data);
+
+		if (data.Scan0 == nullptr) {
+			fprintf(stderr, "loading image failed\n");
+			assert(false);
+			return result;
+		}
+
+		if (i == 0) {
+			width = image.GetWidth();
+			height = image.GetHeight();
+			//glTextureStorage3D(result, 1, GL_RGB8, image.GetWidth(), image.GetHeight(), count);
+
+		}
+
+		glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, srgb ? GL_SRGB : GL_RGB,
+			width, height, 0, GL_BGR, GL_UNSIGNED_BYTE, data.Scan0);
+
+		assert(image.GetWidth() == width);
+		assert(image.GetHeight() == height);
+
+		//glTextureSubImage3D(result, 0, 0, 0, i, image.GetWidth(), image.GetHeight(), 1, GL_BGR, GL_UNSIGNED_BYTE, data.Scan0);
+
+		((Bitmap*)&image)->UnlockBits(&data);
+	}
+
+	glTextureParameteri(result, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTextureParameteri(result, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glTextureParameteri(result, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+	glTextureParameteri(result, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTextureParameteri(result, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+	GdiplusShutdown(token);
+	return result;
+}
+
 Texture<GL_TEXTURE_2D_ARRAY> loadImageArray(const std::wstring* paths, int count) {
 	using namespace Gdiplus;
 	ULONG_PTR token;
