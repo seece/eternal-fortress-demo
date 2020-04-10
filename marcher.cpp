@@ -330,7 +330,8 @@ int main() {
 	{
 		// timestamp objects make gl queries at those locations; you can substract them to get the time
 		TimeStamp start;
-		float secs = getTime(); //fmod(frame / 60.f, 2.0) + 21.;
+		//float secs = getTime(); //fmod(frame / 60.f, 2.0) + 21.;
+		float secs = getTime(); // fmod(getTime() / 2., 2.0) + 40.;
 		float futureInterval = 0. / 60.f;
 		cameraPath(secs + futureInterval, cameras[1]);
 		glNamedBufferSubData(cameraData, 0, sizeof(cameras), &cameras);
@@ -466,6 +467,7 @@ int main() {
 			uniform ivec3 noiseOffset;
             uniform vec3 sunDirection;
             uniform vec3 sunColor;
+            uniform samplerCube skybox;
 			uniform sampler2DArray noiseTextures;
 
             vec3 getNoise(ivec2 coord, int ofs = 0)
@@ -525,16 +527,29 @@ int main() {
             int sampleNum = 0;
 
 			void addRGB(uint pixelIdx, vec3 c, ivec2 pix) {
-                vec3 scale = vec3(100, 100, 50);
-                c = pow(c, vec3(0.7));
-                c += (vec3(0.5)/scale)*(getNoise(pix, sampleNum++) - vec3(.55));
-                c = vec3(.5) + c * scale;
-                uint c0 = uint(c.g);
-                uint c1 = uint(c.r);
-                uint c2 = uint(c.b);
-                uint expanded = (c2 << 23) | (c1 << 12) | (c0 & 0xfff);
-                atomicAdd(colors[pixelIdx], expanded);
+                vec3 scale = vec3(1000.);
+                //c += (vec3(0.5)/scale)*(getNoise(pix, sampleNum++) - vec3(.55));
+                c = max(vec3(0.), c) * scale;
+                uint redblue = ((uint(c.b) << 16) & 0xffff0000) | (uint(c.r) & 0xffff);
+                uint green = uint(c.g) & 0xffff;
+                atomicAdd(colors[pixelIdx*2],   redblue);
+                atomicAdd(colors[pixelIdx*2+1], green);
 			}
+
+            vec3 applyFog( in vec3  rgb,      // original color of the pixel
+                    in float distance, // camera to point distance
+                    in vec3  rayOri,   // camera position
+                    in vec3  rayDir )  // camera to point vector
+            {
+                float b = 0.01;
+                float c = 1.0;
+                float fogAmount = c * exp(-(rayOri.y)*b) * (1.0-exp( -distance*rayDir.y*b ))/rayDir.y;
+                fogAmount = clamp(fogAmount, 0., 1.);
+                float scatter = pow(max(0., dot(rayDir, sunDirection)), 10.);
+                vec3  fogColor = mix(vec3(0.5,0.6,0.7), vec3(1., 0.8, 0.), scatter);
+
+                return mix( rgb, fogColor, fogAmount );
+            }
 
 			void main()
 			{
@@ -588,8 +603,14 @@ int main() {
                 //c = vec3(specular * sun);
 
 				float distance = length(fromCamToPoint);
-				float fog = pow(min(1., distance / 20.), 1.5);
-				c = mix(c, vec3(0.1, 0.1, 0.2)*0.1, fog);
+				//float fog = pow(min(1., distance / 10.), 1.0);
+				//c = mix(c, vec3(0.1, 0.1, 0.2)*0.1, fog);
+
+                c = applyFog( c,      // original color of the pixel
+                    distance, // camera to point distance
+                    cameras[1].pos,   // camera position
+                    -toCamera);  // camera to point vector
+
 
                 //c = vec3(.5) + .5*sin(pos*1.4);
 
@@ -597,7 +618,8 @@ int main() {
 				c = clamp(c, vec3(0.), vec3(1.));
 
 				//float weight = max(0.1, min(1e3, 1. / (pow(camSpace.z / 3., 2.) + 0.001)));
-				float weight = max(0.1, min(1e2, 1. / (pow(camSpace.z / 3., 2.) + 0.001)));
+				float weight = max(0.1, min(1e3, 1. / (pow(camSpace.z / 3., 2.) + 0.001)));
+                const int weight_scale = 1000;
 
                 vec2 w = fract(screenSpace);
                 vec4 ws = vec4(
@@ -616,10 +638,10 @@ int main() {
                 addRGB(idx + screenSize.x,      ws[2] * col, ivec2(x, y+1));
                 addRGB(idx + screenSize.x + 1,  ws[3] * col, ivec2(x+1, y+1));
 
-                atomicAdd(sampleWeights[idx], (uint(1000 * weight * ws[0]) << 16) | uint(255 * ws[0]));
-                atomicAdd(sampleWeights[idx + 1], (uint(1000 * weight * ws[1]) << 16) | uint(255 * ws[1]));
-                atomicAdd(sampleWeights[idx + screenSize.x], (uint(1000 * weight * ws[2]) << 16) | uint(255 * ws[2]));
-                atomicAdd(sampleWeights[idx + screenSize.x + 1], (uint(1000 * weight * ws[3]) << 16) | uint(255 * ws[3]));
+                atomicAdd(sampleWeights[idx], (uint(weight_scale * weight * ws[0]) << 14) | uint(255 * ws[0]));
+                atomicAdd(sampleWeights[idx + 1], (uint(weight_scale * weight * ws[1]) << 14) | uint(255 * ws[1]));
+                atomicAdd(sampleWeights[idx + screenSize.x], (uint(weight_scale * weight * ws[2]) << 14) | uint(255 * ws[2]));
+                atomicAdd(sampleWeights[idx + screenSize.x + 1], (uint(weight_scale * weight * ws[3]) << 14) | uint(255 * ws[3]));
 
 				atomicAdd(pointsSplatted, 1); // TODO DEBUG HACK REMOVE!
 			}
@@ -833,6 +855,7 @@ int main() {
                         c = 3.*pow(c, vec3(1.5));
 
                         float d = dot(dir, sunDirection);
+                        /*
                         float horizon = dir.y;
                         vec3 base = max(0., horizon) * vec3(0., 0.01, 0.03)
                                     + max(0., -horizon) * .1 * vec3(0.6, 0.0, 1.0)
@@ -842,7 +865,12 @@ int main() {
                         float shine =  pow(max(0., d*.8), 20.);
                         //return vec3(disc);
                         //return c * (base + vec3(disc) + shine * sunColor);
-                        return c;
+                        */
+                        float ground = pow(max(0., 1.*dir.y), 10.);
+                        float sky = pow(-min(0., dir.y)+0.5, 1.);
+                        float horizon = pow(1-abs(dir.y+0.2), 20.);
+                        //return mix(c.bgr, 0.005*vec3(0.3, 0.3, 0.5), ground);
+                        return mix(vec3(0., 1., 0.), c.bgr, sky);
                     }
 
                     void main() {
@@ -854,27 +882,32 @@ int main() {
                                 );
 
                         uint weightAlphaPacked = sampleWeights[pixelIdx];
-                        uint fixedWeight = weightAlphaPacked >> 16;
-                        uint fixedAlpha = weightAlphaPacked & 0xffff;
+                        uint fixedWeight = weightAlphaPacked >> 14;
+                        uint fixedAlpha = weightAlphaPacked & 0x3fff;
                         float weight = float(fixedWeight) / 1000.;
                         float alpha = float(fixedAlpha) / 255.;
 
                         alpha = pow(min(1., alpha/3.), 0.5);
 
-                        uint packedColor = colors[pixelIdx];
+                        uint packedColor1 = colors[pixelIdx*2];
+                        uint packedColor2 = colors[pixelIdx*2+1];
                         vec3 color = vec3(
-                                (packedColor & 0x7FF000) >> 12,
-                                packedColor & 0xfff,
-                                (packedColor & 0xff800000) >> 23);
-                        color /= vec3(100., 100., 50.);
-                        color = pow(color, vec3(1./0.7));
+                                packedColor1 & 0xffff,
+                                packedColor2 & 0xffff,
+                                (packedColor1 & 0xffff0000) >> 16);
+                        color /= vec3(1000.);
+                        //color = pow(color, vec3(1./0.7));
 
                         // "color" is now Reinhard tone mapped
 
                         if (weight > 0.) {
                             color /= weight;
+                        } else {
+                            color = vec3(0.);
                         }
 
+                        //if (weight < 4.) color=vec3(1., 0., 0.);
+                        //color = vec3(weight>10.);
 
                         vec3 p, dir;
                         vec2 uv = vec2(gl_FragCoord.x, gl_FragCoord.y) / screenSize;
@@ -889,9 +922,9 @@ int main() {
                         srgb += noise;
                         outColor = vec4(srgb, 1.);
 
-
                         // Clear the accumulation buffer
-                        colors[pixelIdx] = 0;
+                        colors[pixelIdx*2] = 0;
+                        colors[pixelIdx*2+1] = 0;
                         sampleWeights[pixelIdx] = 0;
                     }
 				)

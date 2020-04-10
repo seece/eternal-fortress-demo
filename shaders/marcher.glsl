@@ -182,9 +182,9 @@ float scene(vec3 p, out int material, float pixelConeSize=1.) {
 	return mandelbox(p, 9);
 }
 
-float scene_sphere(vec3 p, out int material, float pixelConeSize=1.) {
+float scene_ball(vec3 p, out int material, float pixelConeSize=1.) {
 	material = MATERIAL_OTHER;
-    float d = length(p) - 1.;
+    float d = length(p - vec3(0., -4., 0.)) - 2.;
     return d;
 }
 
@@ -402,7 +402,7 @@ vec2 shadowMarch(inout vec3 p, vec3 rd, int num_iters, float w, float mint, floa
 }
 float sampleAO(vec3 ro, vec3 rd)
 {
-    const int STEPS = 20;
+    const int STEPS = 10;
     const float step = 0.05;
     float t = step;
     int mat=0;
@@ -507,7 +507,9 @@ vec2 dirToSpherical(vec3 direction)
 }
 
 vec3 sampleSky(vec3 dir) {
-    return texture(skyIrradiance, dirToSpherical(dir)).rgb;
+    vec3 img = texture(skyIrradiance, dirToSpherical(vec3(dir.x, -dir.y, dir.z))).rgb;
+    vec3 skyColor = vec3(0., 0.2*abs(dir.y), 0.5 - dir.y);
+    return img.bgr;
 }
 
 
@@ -673,10 +675,9 @@ void main() {
         }
 
         vec3 color;
-        vec3 skyColor = vec3(0., 0.2*abs(dir.y), 0.5 - dir.y);
 
         if (hitmat == MATERIAL_SKY) {
-            color = skyColor;
+            color = vec3(0.);
         } else {
             vec3 normal = evalnormal(p);
             vec3 roughNormal = evalnormal_rough(p);
@@ -684,7 +685,7 @@ void main() {
             vec3 to_light = sunDirection;
 
             vec3 shadowRayPos = p + to_camera * 1e-4;
-            const float maxShadowDist = 10.;
+            const float maxShadowDist = 30.;
             vec2 shadowResult = shadowMarch(shadowRayPos, to_light, 200, 9e-2, 5e-3, maxShadowDist);
             float sun = min(shadowResult.x, maxShadowDist) / maxShadowDist;
             //sun = pow(shadowResult.y-0.1, 3.0);
@@ -692,21 +693,23 @@ void main() {
             sun = pow(sun, 2.);
 
             float ambient = sampleAO(p, normal);
-            ambient = pow(ambient, 2.0);
+            ambient = pow(ambient, 1.3);
 
             float facing = max(0., dot(normal, to_light));
 
             vec3 base = vec3(.5) + .5*vec3(sin(hitmat + vec3(0., .5, 1.)));
+            base *= 2.;
             float shininess = mod(hitmat * 3.3, 1.0);
 
             color = base * sun * vec3(facing);
-            vec3 skycolor = sampleSky(roughNormal); // vec3(0.5, 0.7, 1.0);
+            vec3 skycolor = color = sampleSky(roughNormal);
             //vec3 suncolor = vec3(1., 0.8, 0.5);
             color = base * (ambient * skycolor + facing * sun * sunColor);
+            //color=vec3(ambient);
             color = clamp(color, vec3(0.), vec3(2.));
+            //shininess = 0.;
             //color *= 0.5;
             //color *= 0.;
-            //shininess = 0.;
 
             //color = vec3(sun);
             //color = vec3(0.5)+.5*cos( 10*vec3(iters)/600.  + vec3(0., 0.5, 1.));
