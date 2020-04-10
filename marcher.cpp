@@ -38,6 +38,7 @@ const int screenw = 1280, screenh = 720;
 constexpr int MAX_POINT_COUNT = 10. * screenw * screenh;
 static constexpr GLuint SAMPLE_BUFFER_TYPE = GL_RGBA16F;
 static constexpr GLuint JITTER_BUFFER_TYPE = GL_RG8;
+static bool showDebugInfo = false;
 
 static void cameraPath(float t, CameraParameters& cam)
 {
@@ -317,7 +318,9 @@ int main() {
 	{
 		// timestamp objects make gl queries at those locations; you can substract them to get the time
 		TimeStamp start;
-		float secs = getTime(); //fmod(frame / 60.f, 2.0) + 21.;
+		//float secs = getTime(); //fmod(frame / 60.f, 2.0) + 21.;
+		float secs = fmod(frame / 60.f, 2.0) + 21.;
+		//secs = 2.0;
 		float futureInterval = 0. / 60.f;
 		cameraPath(secs + futureInterval, cameras[1]);
 		glNamedBufferSubData(cameraData, 0, sizeof(cameras), &cameras);
@@ -663,19 +666,23 @@ int main() {
 		DebugData debugData = {};
 		glGetNamedBufferSubData(debugBuffer, 0, sizeof(DebugData), &debugData);
 
-		printf("debugData: i: %d, parent: %d, size: %d, b: %d, start: %d, parent_size: %d,\nradius: %f, zdepth: %f, parentDepth: %f\n",
-			debugData.i, debugData.parent, debugData.size, debugData.b, debugData.start,
-			debugData.parent_size,
-			debugData.pixelRadius, debugData.zdepth, debugData.parentDepth);
-		printf("nearPlane: %f, projPlaneDist: %f\n", debugData.nearPlane, debugData.projPlaneDist);
-		printf("parent UV: (%f, %f), child UV: (%f, %f)\n",
-			debugData.parentUVx, debugData.parentUVy, debugData.childUVx, debugData.childUVy);
+		if (false) {
+			printf("debugData: i: %d, parent: %d, size: %d, b: %d, start: %d, parent_size: %d,\nradius: %f, zdepth: %f, parentDepth: %f\n",
+				debugData.i, debugData.parent, debugData.size, debugData.b, debugData.start,
+				debugData.parent_size,
+				debugData.pixelRadius, debugData.zdepth, debugData.parentDepth);
+			printf("nearPlane: %f, projPlaneDist: %f\n", debugData.nearPlane, debugData.projPlaneDist);
+			printf("parent UV: (%f, %f), child UV: (%f, %f)\n",
+				debugData.parentUVx, debugData.parentUVy, debugData.childUVx, debugData.childUVy);
+		}
 
-		int data[2];
-		glGetNamedBufferSubData(pointBufferHeader, 0, 8, data);
-		//printf("currentWriteOffset: %d\n", data[0]);
-		pointsSplatted = data[1];
-		//printf("pointsSplatted: %d\t(%.3f million)\n", data[1], data[1]/1000000.);
+		if (showDebugInfo) {
+			int data[2];
+			glGetNamedBufferSubData(pointBufferHeader, 0, 8, data);
+			//printf("currentWriteOffset: %d\n", data[0]);
+			pointsSplatted = data[1];
+			//printf("pointsSplatted: %d\t(%.3f million)\n", data[1], data[1]/1000000.);
+		}
 		if (false) {
 			GLint64 size = -1;
 			glGetNamedBufferParameteri64v(stepBuffer, GL_BUFFER_SIZE, &size);
@@ -899,20 +906,14 @@ int main() {
                                 colors[3 * pixelIdx + 2]
                                 );
 
-                        float edgeFactor = imageLoad(edgebuffer, ivec2(gl_FragCoord.xy)).x;
-
                         uint weightAlphaPacked = sampleWeights[pixelIdx];
                         uint fixedWeight = weightAlphaPacked >> 16;
                         uint fixedAlpha = weightAlphaPacked & 0xffff;
                         float weight = float(fixedWeight) / 1000.;
                         float alpha = float(fixedAlpha) / 255.;
 
+                        alpha = min(1., alpha/5.);
 
-                        alpha = pow(min(1., alpha/1.), 0.1);
-                        //if (edgeFactor == 0.0) alpha = 1.;
-
-                        //uint bits = packUnorm4x8(vec4(c, 0.));
-                        //uint expanded = ((bits & 0xff0000) << 6) | ((bits & 0xff00) << 3) | (bits & 0xff);
                         uint packedColor = colors[pixelIdx];
                         vec3 color = vec3(
                                 (packedColor & 0x7FF000) >> 12,
@@ -923,10 +924,6 @@ int main() {
 
                         // "color" is now Reinhard tone mapped
 
-                        //color = color * color;
-
-                        //color = vec3(color.b);
-                        //vec3 color = vec3(icolor) / 10000.0;
 
                         if (weight > 0.) {
                             color /= weight;
@@ -937,19 +934,12 @@ int main() {
 
 
                         outColor = vec4(linearToSRGB(c.rgb), 1.);
-                        //outColor= vec4(vec3(alpha == 0.), 1.);
 
                         vec3 noise = getNoise(ivec2(gl_FragCoord.xy));
-                        //outColor = vec4(noise, 1.);
 
                         // Clear the accumulation buffer
                         colors[pixelIdx] = 0;
-                        //colors[3 * pixelIdx + 0] = 0;
-                        //colors[3 * pixelIdx + 1] = 0;
-                        //colors[3 * pixelIdx + 2] = 0;
                         sampleWeights[pixelIdx] = 0;
-                        // Clear the edge buffer
-                        imageStore(edgebuffer, ivec2(gl_FragCoord.xy), vec4(0.));
                     }
 				)
 			);
