@@ -532,6 +532,8 @@ void main() {
 
     while (nextRayIndex < rayIndexBufferMaxElements) {
         int arrayIdx = atomicAdd(nextRayIndex, 1);
+        CameraParams cam = cameras[1];
+
 #if USE_TREE
         if (arrayIdx >= rayIndexBufferMaxElements)
             return;
@@ -549,7 +551,7 @@ void main() {
         }
         squareUV /= screenBoundary.xx;
 
-        ivec2 pixelCoord = ivec2(squareUV * vec2(1., cameras[1].aspect) * res.xy);
+        ivec2 pixelCoord = ivec2(squareUV * vec2(1., cam.aspect) * res.xy);
 #else
         int myIdx = arrayIdx;
         if (myIdx >= res.x * res.y)
@@ -560,7 +562,6 @@ void main() {
         vec2 squareUV = (vec2(0.5) / vec2(sideLength)) + pixelCoord / vec2(sideLength);
 #endif
 
-        CameraParams cam = cameras[1];
 
         srand(frame, uint(pixelCoord.x), uint(pixelCoord.y));
         jenkins_mix();

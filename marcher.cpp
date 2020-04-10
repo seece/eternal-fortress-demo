@@ -506,22 +506,15 @@ int main() {
             int sampleNum = 0;
 
 			void addRGB(uint pixelIdx, vec3 c, ivec2 pix) {
-                vec3 scale = vec3(100, 200, 50);
-                //c = pow(c, vec3(0.5));
-                c += (vec3(0.2)/scale)*(getNoise(pix, sampleNum++) - vec3(.5));
-                uint c0 = uint(round(max(0., c.g * scale.g)));
-                uint c1 = uint(round(max(0., c.r * scale.r)));
-                uint c2 = uint(round(max(0., c.b * scale.b)));
-                //uint expanded = ((bits & 0xff0000) << 6) | ((bits & 0xff00) << 3) | (bits & 0xff);
-                uint expanded = (c2 << 22) | (c1 << 12) | (c0 & 0xfff);
-                if (false) {
-                    c *= 8000;
-                    atomicAdd(colors[3 * pixelIdx + 0], uint(c.r));
-                    atomicAdd(colors[3 * pixelIdx + 1], uint(c.g));
-                    atomicAdd(colors[3 * pixelIdx + 2], uint(c.b));
-                } else {
-                    atomicAdd(colors[pixelIdx], expanded);
-                }
+                vec3 scale = vec3(100, 200, 75);
+                c = pow(c, vec3(0.7));
+                //c += (vec3(0.7)/scale)*(getNoise(pix, sampleNum++) - vec3(.55));
+                c = vec3(.5) + c * scale;
+                uint c0 = uint(c.g);
+                uint c1 = uint(c.r);
+                uint c2 = uint(c.b);
+                uint expanded = (c2 << 23) | (c1 << 12) | (c0 & 0xfff);
+                atomicAdd(colors[pixelIdx], expanded);
 			}
 
 			void main()
@@ -573,14 +566,14 @@ int main() {
                 vec3 toCamera = normalize(-fromCamToPoint);
                 vec3 H = normalize(sunDirection + toCamera);
                 float specular = pow(max(0., dot(normal, H)), 50.);
-                c = mix(c, vec3(specular * sun), 0.95);
+                c = mix(c, vec3(specular * sun), 0.0);
                 //c = vec3(specular * sun);
 
 				float distance = length(fromCamToPoint);
 				float fog = pow(min(1., distance / 20.), 1.0);
 				//c = mix(c, vec3(0.1, 0.1, 0.2)*0.1, fog);
 
-                c = vec3(.5) + .5*sin(pos*1.4);
+                //c = vec3(.5) + .5*sin(pos*1.4);
 
 				c = c / (vec3(1.) + c);
 				c = clamp(c, vec3(0.), vec3(1.));
@@ -916,17 +909,17 @@ int main() {
 
 
                         alpha = pow(min(1., alpha/1.), 0.1);
-                        if (edgeFactor == 0.0) alpha = 1.;
+                        //if (edgeFactor == 0.0) alpha = 1.;
 
                         //uint bits = packUnorm4x8(vec4(c, 0.));
                         //uint expanded = ((bits & 0xff0000) << 6) | ((bits & 0xff00) << 3) | (bits & 0xff);
                         uint packedColor = colors[pixelIdx];
                         vec3 color = vec3(
-                                (packedColor & 0x3FF000) >> 12,
+                                (packedColor & 0x7FF000) >> 12,
                                 packedColor & 0xfff,
-                                (packedColor & 0xffc00000) >> 22);
-                        color /= vec3(100., 200., 50.);
-                        //color = pow(color, vec3(2.0));
+                                (packedColor & 0xff800000) >> 23);
+                        color /= vec3(100., 200., 75.);
+                        color = pow(color, vec3(1./0.8));
 
                         // "color" is now Reinhard tone mapped
 
@@ -942,7 +935,6 @@ int main() {
                         vec3 skyColor = vec3(0., 0.5, 1.);
                         vec3 c = mix(skyColor, color, alpha);
 
-                        //c= vec3(edgeFactor > 0.5);
 
                         outColor = vec4(linearToSRGB(c.rgb), 1.);
                         //outColor= vec4(vec3(alpha == 0.), 1.);
