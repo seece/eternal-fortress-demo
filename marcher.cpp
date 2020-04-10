@@ -6,7 +6,7 @@
 #include <cassert>
 
 
-double getTime()
+double getSystemTime()
 {
 	static bool initialized;
 	static LARGE_INTEGER StartingTime;
@@ -100,6 +100,43 @@ vec2 getRandomJitter()
 	xi = (xi+1) % (sizeof(xs) / sizeof(int));
 	yi = (yi+1) % (sizeof(ys) / sizeof(int));
 	return vec2(x - 10, y - 10) / 20.f;
+}
+
+
+struct Shot {
+	// static
+	std::string name;
+	float start = 0.f;
+	// dynamic state
+	float end =0.f;
+	float length = 0.f;
+	float relative = 0.f;
+	float ratio = 0.f;
+};
+
+static std::vector<Shot> loadShots()
+{
+	std::vector<Shot> news;
+	FILE* fp = fopen("assets/shots.txt", "r");
+	if (fp) {
+		int num = 10;
+		while (num >= 2) {
+			Shot s = {};
+			char name[128] = { '\0' };
+			num = fscanf(fp, "%f %127s\n",
+				&s.start,
+				name
+			);
+			if (num >= 2) {
+				s.name = name;
+				news.push_back(s);
+				printf("loaded shot %s\n", name);
+			}
+
+		}
+		fclose(fp);
+	}
+	return news;
 }
 
 int main() {
@@ -301,22 +338,46 @@ int main() {
 	Music music(L"assets/final3_fraktals.wav");
 	music.play();
 
+	std::vector<Shot> shots;
+	std::map<std::string, Shot&> shotNames;
 	std::vector<CameraPose> cameraPoses;
 	bool interactive = true;
 	bool controls = true;
 
 	while (loop()) // loop() stops if esc pressed or window closed
 	{
-		// timestamp objects make gl queries at those locations; you can substract them to get the time
 		TimeStamp start;
-		//float secs = getTime(); //fmod(frame / 60.f, 2.0) + 21.;
-		float secs = getTime(); // fmod(getTime() / 2., 2.0) + 40.;
+		float secs = music.getTime();
 
-		if (frame % 4 == 0) {
+		if (frame == 0 || (controls && (frame % 4 == 0))) {
 			std::vector<CameraPose> newPoses = loadPoses();
 			if (newPoses.size() > 0) {
 				cameraPoses = newPoses;
 				printf("Loaded %d new poses\n", newPoses.size());
+			}
+			std::vector<Shot> newShots = loadShots();
+			if (newShots.size() > 0) {
+				shots = newShots;
+				Shot s;
+				s.start = music.getDuration();
+				s.name = "footer";
+				shots.push_back(s);
+			}
+		}
+
+		Shot& currentShot = shots[shots.size()-1];
+
+		for (int i = 0; i < shots.size() - 1; i++) {
+			shots[i].end = shots[i + 1].start;
+			shots[i].length = shots[i].end - shots[i].start;
+			shots[i].relative = secs - shots[i].start;
+			shots[i].ratio = shots[i].relative / shots[i].length;
+		}
+
+		for (int i = 0; i < shots.size() - 1; i++) {
+			if (shots[i + 1].start > secs) {
+				currentShot = shots[i];
+				break;
 			}
 		}
 
@@ -337,8 +398,8 @@ int main() {
 
 		if (controls) {
 			float seekTime = 1.f;
-			if (keyDown(VK_SHIFT)) {
-				seekTime *= 10.f;
+			if (keyDown(VK_LSHIFT) || keyDown(VK_RSHIFT)) {
+				seekTime *= 5.f;
 			}
 			if (keyDown(VK_LEFT)) {
 				music.seek(music.getTime() - seekTime);
@@ -965,13 +1026,20 @@ int main() {
 		// here we're just using two timestamps, but you could of course measure intermediate timings as well
 		TimeStamp end;
 
-		// print the timing (word of warning; this forces a cpu-gpu synchronization)
-		font.drawText(L"Total: " + std::to_wstring(end - start), 10.f, 10.f, 15.f); // text, x, y, font size
-		font.drawText(L"Draw: " + std::to_wstring(drawTime - start), 10.f, 25.f, 15.f);
-		font.drawText(L"Splat: " + std::to_wstring(splatTime - drawTime), 10.f, 40.f, 15.f);
-		font.drawText(L"PostProc: " + std::to_wstring(end - splatTime), 10.f, 55.f, 15.f);
-		font.drawText(L"Points: " + std::to_wstring(pointsSplatted / 1000. / 1000.) + L" M", 200.f, 10.f, 15.f);
-		font.drawText(L"Music: " + std::to_wstring(music.getTime()) + L" s", 200.f, 25.f, 15.f);
+		if (controls) {
+			// print the timing (word of warning; this forces a cpu-gpu synchronization)
+			font.drawText(L"Total: " + std::to_wstring(end - start), 10.f, 10.f, 15.f); // text, x, y, font size
+			font.drawText(L"Draw: " + std::to_wstring(drawTime - start), 10.f, 25.f, 15.f);
+			font.drawText(L"Splat: " + std::to_wstring(splatTime - drawTime), 10.f, 40.f, 15.f);
+			font.drawText(L"PostProc: " + std::to_wstring(end - splatTime), 10.f, 55.f, 15.f);
+			font.drawText(L"Points: " + std::to_wstring(pointsSplatted / 1000. / 1000.) + L" M", 200.f, 10.f, 15.f);
+			font.drawText(L"Music: " + std::to_wstring(music.getTime()) + L" s", 200.f, 25.f, 15.f);
+			{
+				std::wstring ws;
+				ws.assign(currentShot.name.begin(), currentShot.name.end());
+				font.drawText(L"Shot: " + ws + std::to_wstring(currentShot.relative) + L" s", 200.f, 40.f, 15.f);
+			}
+		}
 
 		// this actually displays the rendered image
 		swapBuffers();

@@ -58,6 +58,8 @@ static std::vector<CameraPose> loadPoses()
 	return newPoses;
 }
 
+
+
 extern const int screenw;
 extern const int screenh;
 
