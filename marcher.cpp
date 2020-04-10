@@ -449,11 +449,11 @@ int main() {
             uniform vec3 sunDirection;
 			uniform sampler2DArray noiseTextures;
 
-			vec3 getNoise(ivec2 coord)
-			{
-				return texelFetch(noiseTextures,
-					ivec3((coord.x + noiseOffset.x) % 64, (coord.y + noiseOffset.y) % 64, noiseOffset.z),0).rgb;
-			}
+            vec3 getNoise(ivec2 coord, int ofs = 0)
+            {
+                return texelFetch(noiseTextures,
+                        ivec3((coord.x + noiseOffset.x) % 64, (coord.y + noiseOffset.y) % 64, (noiseOffset.z + ofs) % 64), 0).rgb;
+            }
 
 			layout(std140) uniform cameraArray {
 				CameraParams cameras[2];
@@ -493,11 +493,27 @@ int main() {
 				return vec3(plane + vec2(0.5, 0.5 * cam.aspect), z);
 			}
 
-			void addRGB(uint pixelIdx, vec3 c) {
-                uint bits = packUnorm4x8(vec4(
-                            pow(c, vec3(.7)) * vec3(0.5, 0.5, .5)
-                            , 0.));
-                uint expanded = ((bits & 0xff0000) << 6) | ((bits & 0xff00) << 3) | (bits & 0xff);
+            // https://software.intel.com/en-us/node/503873
+            vec3 RGB_YCoCg(vec3 c)
+            {
+                return vec3(
+                        c.x / 4.0 + c.y / 2.0 + c.z / 4.0,
+                        c.x / 2.0 - c.z / 2.0,
+                        -c.x / 4.0 + c.y / 2.0 - c.z / 4.0
+                        );
+            }
+
+            int sampleNum = 0;
+
+			void addRGB(uint pixelIdx, vec3 c, ivec2 pix) {
+                vec3 scale = vec3(100, 200, 50);
+                //c = pow(c, vec3(0.5));
+                c += (vec3(0.2)/scale)*(getNoise(pix, sampleNum++) - vec3(.5));
+                uint c0 = uint(round(max(0., c.g * scale.g)));
+                uint c1 = uint(round(max(0., c.r * scale.r)));
+                uint c2 = uint(round(max(0., c.b * scale.b)));
+                //uint expanded = ((bits & 0xff0000) << 6) | ((bits & 0xff00) << 3) | (bits & 0xff);
+                uint expanded = (c2 << 22) | (c1 << 12) | (c0 & 0xfff);
                 if (false) {
                     c *= 8000;
                     atomicAdd(colors[3 * pixelIdx + 0], uint(c.r));
@@ -564,6 +580,8 @@ int main() {
 				float fog = pow(min(1., distance / 20.), 1.0);
 				//c = mix(c, vec3(0.1, 0.1, 0.2)*0.1, fog);
 
+                c = vec3(.5) + .5*sin(pos*1.4);
+
 				c = c / (vec3(1.) + c);
 				c = clamp(c, vec3(0.), vec3(1.));
 
@@ -572,7 +590,7 @@ int main() {
                 // isEdge = false; // DEBUG HACK: no AA!
 
 				if (false && !isEdge) {
-					addRGB(pixelIdx, weight * c);
+					addRGB(pixelIdx, weight * c, ivec2(x, y));
 					atomicAdd(sampleWeights[pixelIdx], (uint(1000 * weight) << 16) | (255));
 				}
 				else {
@@ -588,10 +606,10 @@ int main() {
 
 					// FIXME: don't write over image boundaries
 					vec3 col = weight * c;
-					addRGB(idx,                     ws[0] * col);
-					addRGB(idx + 1,                 ws[1] * col);
-					addRGB(idx + screenSize.x,      ws[2] * col);
-					addRGB(idx + screenSize.x + 1,  ws[3] * col);
+					addRGB(idx,                     ws[0] * col, ivec2(x, y));
+					addRGB(idx + 1,                 ws[1] * col, ivec2(x+1, y));
+					addRGB(idx + screenSize.x,      ws[2] * col, ivec2(x, y+1));
+					addRGB(idx + screenSize.x + 1,  ws[3] * col, ivec2(x+1, y+1));
 
 					atomicAdd(sampleWeights[idx], (uint(1000 * weight * ws[0]) << 16) | uint(255 * ws[0]));
 					atomicAdd(sampleWeights[idx + 1], (uint(1000 * weight * ws[1]) << 16) | uint(255 * ws[1]));
@@ -782,10 +800,10 @@ int main() {
 						outDir = normalize(outPos - cam.pos);
 					}
 
-					vec3 getNoise(ivec2 coord)
+					vec3 getNoise(ivec2 coord, int ofs = 0)
 					{
 						return texelFetch(noiseTextures,
-							ivec3((coord.x + noiseOffset.x) % 64, (coord.y + noiseOffset.y) % 64, noiseOffset.z), 0).rgb;
+							ivec3((coord.x + noiseOffset.x) % 64, (coord.y + noiseOffset.y) % 64, (noiseOffset.z + ofs) % 64), 0).rgb;
 					}
 
 					// Maps a ray index "i" into a bin index.
@@ -869,6 +887,16 @@ int main() {
                         return uv;
                     }
 
+                    // https://software.intel.com/en-us/node/503873
+                    vec3 YCoCg_RGB(vec3 c)
+                    {
+                        return clamp(vec3(
+                                    c.x + c.y - c.z,
+                                    c.x + c.z,
+                                    c.x - c.y - c.z
+                                    ), vec3(0.), vec3(1.));
+                    }
+
                     void main() {
                         int pixelIdx = screenSize.x * int(gl_FragCoord.y) + int(gl_FragCoord.x);
 
@@ -894,12 +922,11 @@ int main() {
                         //uint expanded = ((bits & 0xff0000) << 6) | ((bits & 0xff00) << 3) | (bits & 0xff);
                         uint packedColor = colors[pixelIdx];
                         vec3 color = vec3(
-                                packedColor & 0x7ff,
-                                (packedColor & 0x3FF800) >> 11,
+                                (packedColor & 0x3FF000) >> 12,
+                                packedColor & 0xfff,
                                 (packedColor & 0xffc00000) >> 22);
-                        color /= 255.;
-                        color *= vec3(2., 2., 2.);
-                        color = pow(color, vec3(1./0.7));
+                        color /= vec3(100., 200., 50.);
+                        //color = pow(color, vec3(2.0));
 
                         // "color" is now Reinhard tone mapped
 
