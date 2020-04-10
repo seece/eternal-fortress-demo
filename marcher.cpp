@@ -1,18 +1,10 @@
 
 #include "testbench.h"
+#include "mp3music.h"
+#include "cameras.h"
 #include <cinttypes>
 #include <cassert>
 
-struct CameraParameters {
-	vec3 pos;
-	float padding0;
-	vec3 dir;
-	float nearplane;
-	vec3 up;
-	float aspect;
-	vec3 right;
-	float padding3;
-};
 
 double getTime()
 {
@@ -39,32 +31,6 @@ constexpr int MAX_POINT_COUNT = 10. * screenw * screenh;
 static constexpr GLuint SAMPLE_BUFFER_TYPE = GL_RGBA16F;
 static constexpr GLuint JITTER_BUFFER_TYPE = GL_RG8;
 static bool showDebugInfo = false;
-
-struct CameraPose {
-    vec3 pos;
-    vec3 dir;
-    float zoom;
-	std::string name;
-};
-
-static void makeCamera(const CameraPose& pose, CameraParameters& cam)
-{
-	cam.pos = pose.pos;
-	cam.dir = pose.dir;
-	cam.right = normalize(cross(cam.dir, vec3(0.f, 1.f, 0.f)));
-	cam.up = cross(cam.dir, cam.right);
-
-	cam.aspect = float(screenw) / float(screenh);
-	
-	float nearplane = 0.1f;
-	cam.dir *= nearplane;
-	cam.right *= nearplane;
-	cam.right /= pose.zoom;
-	cam.up *= nearplane;
-	cam.up /= pose.zoom;
-
-	cam.nearplane = length(cam.dir);
-}
 
 static void cameraPath(float t, CameraPose& pose)
 {
@@ -135,44 +101,6 @@ vec2 getRandomJitter()
 	yi = (yi+1) % (sizeof(ys) / sizeof(int));
 	return vec2(x - 10, y - 10) / 20.f;
 }
-
-static std::vector<CameraPose> loadPoses()
-{
-	std::vector<CameraPose> newPoses;
-	FILE* fp = fopen("assets/cams.txt", "r");
-	if (fp) {
-		int num = 10;
-		while (num >= 5) {
-			CameraPose p = {};
-			float theta = 0.f, phi = 0.f;
-			char name[128] = { '\0' };
-			num = fscanf(fp, "%f %f %f %f %f %f %127s\n",
-				&p.pos.x,
-				&p.pos.y,
-				&p.pos.z,
-				&phi,
-				&theta,
-				&p.zoom,
-				name
-			);
-			if (num >= 5) {
-				phi += 3.1415926536 / 2.f;
-				p.dir = vec3(cos(theta)*sin(phi), sin(theta)*sin(phi), cos(phi));
-			}
-			if (num == 6) {
-				p.name = std::string(name);
-			}
-			if (num >= 5) {
-				newPoses.push_back(p);
-				printf("loaded %s, phi: %f, theta: %f\n", name, phi, theta);
-			}
-
-		}
-		fclose(fp);
-	}
-	return newPoses;
-}
-
 
 int main() {
 
@@ -370,8 +298,12 @@ int main() {
 	glGetNamedBufferParameteri64v(jumpbuffer, GL_BUFFER_SIZE, &jumpBufferSize);
 	printf("jumpBuffer size: %" PRId64 " bytes = %.3f MiB\n", jumpBufferSize, jumpBufferSize / 1024. / 1024.);
 	
+	Music music(L"assets/final3_fraktals.wav");
+	music.play();
+
 	std::vector<CameraPose> cameraPoses;
 	bool interactive = true;
+	bool controls = true;
 
 	while (loop()) // loop() stops if esc pressed or window closed
 	{
@@ -402,6 +334,22 @@ int main() {
 		glNamedBufferSubData(cameraData, 0, sizeof(cameras), &cameras);
 		vec3 sunDirection = normalize(vec3(-0.5f, -1.0f, 0.7f));
 		vec3 sunColor = vec3(1., 0.8, 0.5);
+
+		if (controls) {
+			float seekTime = 1.f;
+			if (keyDown(VK_SHIFT)) {
+				seekTime *= 10.f;
+			}
+			if (keyDown(VK_LEFT)) {
+				music.seek(music.getTime() - seekTime);
+			}
+			else if (keyDown(VK_RIGHT)) {
+				music.seek(music.getTime() + seekTime);
+			}
+			if (keyHit(VK_SPACE)) music.togglePlaying();
+			if (keyHit(VK_BACK)) music.seek(0.);
+			if (keyHit(0x4D)) music.setVolume(music.getVolume() > -100. ? -100. : 0.);
+		}
 
 		float zeroFloat = 0.f;
 		glClearNamedBufferData(jumpbuffer, GL_R32F, GL_RED, GL_FLOAT, &zeroFloat);
@@ -1023,6 +971,7 @@ int main() {
 		font.drawText(L"Splat: " + std::to_wstring(splatTime - drawTime), 10.f, 40.f, 15.f);
 		font.drawText(L"PostProc: " + std::to_wstring(end - splatTime), 10.f, 55.f, 15.f);
 		font.drawText(L"Points: " + std::to_wstring(pointsSplatted / 1000. / 1000.) + L" M", 200.f, 10.f, 15.f);
+		font.drawText(L"Music: " + std::to_wstring(music.getTime()) + L" s", 200.f, 25.f, 15.f);
 
 		// this actually displays the rendered image
 		swapBuffers();

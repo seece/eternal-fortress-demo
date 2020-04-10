@@ -88,7 +88,7 @@
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <ExceptionHandling>Sync</ExceptionHandling>
-      <PreprocessorDefinitions>_HAS_ITERATOR_DEBUGGING=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_HAS_ITERATOR_DEBUGGING=0;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -119,7 +119,7 @@
       <AdditionalIncludeDirectories>C:\Users\frans\Documents\Visual Studio 2017\Projects\testbench;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <ExceptionHandling>Sync</ExceptionHandling>
-      <PreprocessorDefinitions>_HAS_ITERATOR_DEBUGGING=0;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_HAS_ITERATOR_DEBUGGING=0;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
@@ -132,16 +132,19 @@
     <ClCompile Include="main.cpp" />
     <ClCompile Include="marcher.cpp" />
     <ClCompile Include="math_helpers.cpp" />
+    <ClCompile Include="mp3music.cpp" />
     <ClCompile Include="program.cpp" />
     <ClCompile Include="text_renderer.cpp" />
     <ClCompile Include="window.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="cameras.h" />
     <ClInclude Include="gl_helpers.h" />
     <ClInclude Include="gl_timing.h" />
     <ClInclude Include="inline_glsl.h" />
     <ClInclude Include="loadgl\loadgl46.h" />
     <ClInclude Include="math_helpers.h" />
+    <ClInclude Include="mp3music.h" />
     <ClInclude Include="shaderprintf.h" />
     <ClInclude Include="testbench.h" />
     <ClInclude Include="text_renderer.h" />
