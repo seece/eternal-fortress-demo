@@ -40,30 +40,38 @@ static constexpr GLuint SAMPLE_BUFFER_TYPE = GL_RGBA16F;
 static constexpr GLuint JITTER_BUFFER_TYPE = GL_RG8;
 static bool showDebugInfo = false;
 
-static void cameraPath(float t, CameraParameters& cam)
+struct CameraPose {
+    vec3 pos;
+    vec3 dir;
+    float zoom;
+	std::string name;
+};
+
+static void makeCamera(const CameraPose& pose, CameraParameters& cam)
 {
-	float tt = t * 0.1f;
-	//cam.pos = vec3(0.5f*sin(tt), 0.f, 6.f + 0.5f*cos(tt));
-	cam.pos = vec3(0. + 2.0 * sin(tt), -4., 7.f + 0.1f*cos(tt));
-	// cam.dir = normalize(vec3(0.5f*cos(tt*0.5f), 0.3 + 0.2f*sin(tt), -1.f));
-	cam.dir = normalize(vec3(0.9f*cos(tt*0.5f), 0.3 + 0.9f*sin(tt), -1.f));
-	//cam.pos = vec3(0., 0., 4.);
-	//cam.dir = vec3(0., 0., -1.);
+	cam.pos = pose.pos;
+	cam.dir = pose.dir;
 	cam.right = normalize(cross(cam.dir, vec3(0.f, 1.f, 0.f)));
 	cam.up = cross(cam.dir, cam.right);
 
 	cam.aspect = float(screenw) / float(screenh);
 	
 	float nearplane = 0.1f;
-	float zoom = 0.5f;
 	cam.dir *= nearplane;
 	cam.right *= nearplane;
-	cam.right /= zoom;
+	cam.right /= pose.zoom;
 	cam.up *= nearplane;
-	cam.up /= zoom;
-	//cam.up /= cam.aspect;
+	cam.up /= pose.zoom;
 
 	cam.nearplane = length(cam.dir);
+}
+
+static void cameraPath(float t, CameraPose& pose)
+{
+	float tt = t * 0.1f;
+	pose.pos = vec3(0. + 2.0 * sin(tt), -4., 7.f + 0.1f*cos(tt));
+	pose.dir = normalize(vec3(0.9f*cos(tt*0.5f), 0.3 + 0.9f*sin(tt), -1.f));
+	pose.zoom = 0.5f;
 }
 
 static void setWrapToClamp(GLuint tex) {
@@ -126,6 +134,43 @@ vec2 getRandomJitter()
 	xi = (xi+1) % (sizeof(xs) / sizeof(int));
 	yi = (yi+1) % (sizeof(ys) / sizeof(int));
 	return vec2(x - 10, y - 10) / 20.f;
+}
+
+static std::vector<CameraPose> loadPoses()
+{
+	std::vector<CameraPose> newPoses;
+	FILE* fp = fopen("assets/cams.txt", "r");
+	if (fp) {
+		int num = 10;
+		while (num >= 5) {
+			CameraPose p = {};
+			float theta = 0.f, phi = 0.f;
+			char name[128] = { '\0' };
+			num = fscanf(fp, "%f %f %f %f %f %f %127s\n",
+				&p.pos.x,
+				&p.pos.y,
+				&p.pos.z,
+				&phi,
+				&theta,
+				&p.zoom,
+				name
+			);
+			if (num >= 5) {
+				phi += 3.1415926536 / 2.f;
+				p.dir = vec3(cos(theta)*sin(phi), sin(theta)*sin(phi), cos(phi));
+			}
+			if (num == 6) {
+				p.name = std::string(name);
+			}
+			if (num >= 5) {
+				newPoses.push_back(p);
+				printf("loaded %s, phi: %f, theta: %f\n", name, phi, theta);
+			}
+
+		}
+		fclose(fp);
+	}
+	return newPoses;
 }
 
 
@@ -324,7 +369,9 @@ int main() {
 	GLint64 jumpBufferSize = -1;
 	glGetNamedBufferParameteri64v(jumpbuffer, GL_BUFFER_SIZE, &jumpBufferSize);
 	printf("jumpBuffer size: %" PRId64 " bytes = %.3f MiB\n", jumpBufferSize, jumpBufferSize / 1024. / 1024.);
-
+	
+	std::vector<CameraPose> cameraPoses;
+	bool interactive = true;
 
 	while (loop()) // loop() stops if esc pressed or window closed
 	{
@@ -332,12 +379,29 @@ int main() {
 		TimeStamp start;
 		//float secs = getTime(); //fmod(frame / 60.f, 2.0) + 21.;
 		float secs = getTime(); // fmod(getTime() / 2., 2.0) + 40.;
+
+		if (frame % 4 == 0) {
+			std::vector<CameraPose> newPoses = loadPoses();
+			if (newPoses.size() > 0) {
+				cameraPoses = newPoses;
+				printf("Loaded %d new poses\n", newPoses.size());
+			}
+		}
+
 		float futureInterval = 0. / 60.f;
-		cameraPath(secs + futureInterval, cameras[1]);
+		CameraPose pose, futurePose;
+		if (interactive) {
+			pose = cameraPoses[0];
+			futurePose = pose;
+		}
+		else {
+			cameraPath(secs, pose);
+			cameraPath(secs + futureInterval, futurePose);
+		}
+		makeCamera(futurePose, cameras[1]);
 		glNamedBufferSubData(cameraData, 0, sizeof(cameras), &cameras);
 		vec3 sunDirection = normalize(vec3(-0.5f, -1.0f, 0.7f));
-        vec3 sunColor = vec3(1., 0.8, 0.5);
-
+		vec3 sunColor = vec3(1., 0.8, 0.5);
 
 		float zeroFloat = 0.f;
 		glClearNamedBufferData(jumpbuffer, GL_R32F, GL_RED, GL_FLOAT, &zeroFloat);
@@ -619,7 +683,7 @@ int main() {
 
 				//float weight = max(0.1, min(1e3, 1. / (pow(camSpace.z / 3., 2.) + 0.001)));
 				float weight = max(0.1, min(1e3, 1. / (pow(camSpace.z / 3., 2.) + 0.001)));
-                const int weight_scale = 1000;
+                const int weight_scale = 500;
 
                 vec2 w = fract(screenSpace);
                 vec4 ws = vec4(
@@ -650,7 +714,7 @@ int main() {
 
 		int numberOfPointsToSplat = MAX_POINT_COUNT;
 
-		cameraPath(secs, cameras[1]);
+		makeCamera(pose, cameras[1]);
 		glNamedBufferSubData(cameraData, 0, sizeof(cameras), &cameras);
 
 		glUseProgram(pointSplat);
@@ -870,7 +934,8 @@ int main() {
                         float sky = pow(-min(0., dir.y)+0.5, 1.);
                         float horizon = pow(1-abs(dir.y+0.2), 20.);
                         //return mix(c.bgr, 0.005*vec3(0.3, 0.3, 0.5), ground);
-                        return mix(vec3(0., 1., 0.), c.bgr, sky);
+                        //return mix(vec3(0., 1., 0.), c.bgr, sky);
+                        return c.bgr;
                     }
 
                     void main() {
@@ -884,7 +949,7 @@ int main() {
                         uint weightAlphaPacked = sampleWeights[pixelIdx];
                         uint fixedWeight = weightAlphaPacked >> 14;
                         uint fixedAlpha = weightAlphaPacked & 0x3fff;
-                        float weight = float(fixedWeight) / 1000.;
+                        float weight = float(fixedWeight) / 500.;
                         float alpha = float(fixedAlpha) / 255.;
 
                         alpha = pow(min(1., alpha/3.), 0.5);
