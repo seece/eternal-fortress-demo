@@ -32,6 +32,7 @@ uniform ivec2 screenSize;
 uniform vec2 screenBoundary;
 uniform vec2 cameraJitter;
 uniform vec3 sunDirection;
+uniform vec3 sunColor;
 
 layout(r32f) uniform image2D zbuffer;
 layout(r8) uniform image2D edgebuffer;
@@ -678,11 +679,12 @@ void main() {
             float facing = max(0., dot(normal, to_light));
 
             vec3 base = vec3(.5) + .5*vec3(sin(hitmat + vec3(0., .5, 1.)));
+            float shininess = mod(hitmat * 3.3, 1.0);
 
             color = base * sun * vec3(facing);
             vec3 skycolor = vec3(0.5, 0.7, 1.0);
-            vec3 suncolor = vec3(1., 0.8, 0.5);
-            color = base * (ambient * skycolor + facing * sun * suncolor);
+            //vec3 suncolor = vec3(1., 0.8, 0.5);
+            color = base * (ambient * skycolor + facing * sun * sunColor);
             color = clamp(color, vec3(0.), vec3(10.));
 
             //color = vec3(sun);
@@ -694,7 +696,7 @@ void main() {
             vec2 packedNormal = encodeNormal(roughNormal);
 
             points[myPointOffset].xyz = p;
-            points[myPointOffset].normalSpecularSun = packUnorm4x8(vec4(packedNormal, 0.5, sun));
+            points[myPointOffset].normalSpecularSun = packUnorm4x8(vec4(packedNormal, shininess, sun));
             points[myPointOffset].rgba = vec4(color, 1.);
         }
 

@@ -325,6 +325,8 @@ int main() {
 		cameraPath(secs + futureInterval, cameras[1]);
 		glNamedBufferSubData(cameraData, 0, sizeof(cameras), &cameras);
 		vec3 sunDirection = normalize(vec3(-0.5f, -1.0f, 0.7f));
+        vec3 sunColor = vec3(1., 0.8, 0.5);
+
 
 		float zeroFloat = 0.f;
 		glClearNamedBufferData(jumpbuffer, GL_R32F, GL_RED, GL_FLOAT, &zeroFloat);
@@ -351,6 +353,7 @@ int main() {
 		glUniform2f("screenBoundary", screenBoundary.x, screenBoundary.y);
 		glUniform2f("cameraJitter", cameraJitter.x, cameraJitter.y);
 		glUniform3f("sunDirection", sunDirection.x, sunDirection.y, sunDirection.z);
+		glUniform3f("sunColor", sunColor.x, sunColor.y, sunColor.z);
 		glUniform1i("pointBufferMaxElements", pointBufferMaxElements);
 		glUniform1i("jumpBufferMaxElements", jumpBufferMaxElements);
 		glUniform1i("rayIndexBufferMaxElements", rayIndexBufferMaxElements);
@@ -450,6 +453,7 @@ int main() {
 			uniform ivec2 screenSize;
 			uniform ivec3 noiseOffset;
             uniform vec3 sunDirection;
+            uniform vec3 sunColor;
 			uniform sampler2DArray noiseTextures;
 
             vec3 getNoise(ivec2 coord, int ofs = 0)
@@ -565,11 +569,10 @@ int main() {
 				int pixelIdx = screenSize.x * y + x;
 				bool isEdge = imageLoad(edgebuffer, ivec2(x, y)).x > 0;
 
-                float diffuse = max(0., dot(sunDirection, normal));
                 vec3 toCamera = normalize(-fromCamToPoint);
                 vec3 H = normalize(sunDirection + toCamera);
-                float specular = pow(max(0., dot(normal, H)), 50.);
-                c = mix(c, vec3(specular * sun), 0.0);
+                float specular = pow(max(0., dot(normal, H)), 10.);
+                c = mix(c, (specular * sun) * c, materialShininess);
                 //c = vec3(specular * sun);
 
 				float distance = length(fromCamToPoint);
@@ -583,37 +586,29 @@ int main() {
 
 				float weight = max(0.1, min(1e3, 1. / (pow(camSpace.z / 3., 2.) + 0.001)));
 
-                // isEdge = false; // DEBUG HACK: no AA!
+                vec2 w = fract(screenSpace);
+                vec4 ws = vec4(
+                        (1. - w.x) * (1. - w.y),
+                        w.x * (1. - w.y),
+                        (1. - w.x) * w.y,
+                        w.x * w.y
+                        );
 
-				if (false && !isEdge) {
-					addRGB(pixelIdx, weight * c, ivec2(x, y));
-					atomicAdd(sampleWeights[pixelIdx], (uint(1000 * weight) << 16) | (255));
-				}
-				else {
-					vec2 w = fract(screenSpace);
-					vec4 ws = vec4(
-						(1. - w.x) * (1. - w.y),
-						w.x * (1. - w.y),
-						(1. - w.x) * w.y,
-						w.x * w.y
-					);
+                int idx = screenSize.x * int(screenSpace.y) + int(screenSpace.x);
 
-					int idx = screenSize.x * int(screenSpace.y) + int(screenSpace.x);
+                // FIXME: don't write over image boundaries
+                vec3 col = weight * c;
+                addRGB(idx,                     ws[0] * col, ivec2(x, y));
+                addRGB(idx + 1,                 ws[1] * col, ivec2(x+1, y));
+                addRGB(idx + screenSize.x,      ws[2] * col, ivec2(x, y+1));
+                addRGB(idx + screenSize.x + 1,  ws[3] * col, ivec2(x+1, y+1));
 
-					// FIXME: don't write over image boundaries
-					vec3 col = weight * c;
-					addRGB(idx,                     ws[0] * col, ivec2(x, y));
-					addRGB(idx + 1,                 ws[1] * col, ivec2(x+1, y));
-					addRGB(idx + screenSize.x,      ws[2] * col, ivec2(x, y+1));
-					addRGB(idx + screenSize.x + 1,  ws[3] * col, ivec2(x+1, y+1));
+                atomicAdd(sampleWeights[idx], (uint(1000 * weight * ws[0]) << 16) | uint(255 * ws[0]));
+                atomicAdd(sampleWeights[idx + 1], (uint(1000 * weight * ws[1]) << 16) | uint(255 * ws[1]));
+                atomicAdd(sampleWeights[idx + screenSize.x], (uint(1000 * weight * ws[2]) << 16) | uint(255 * ws[2]));
+                atomicAdd(sampleWeights[idx + screenSize.x + 1], (uint(1000 * weight * ws[3]) << 16) | uint(255 * ws[3]));
 
-					atomicAdd(sampleWeights[idx], (uint(1000 * weight * ws[0]) << 16) | uint(255 * ws[0]));
-					atomicAdd(sampleWeights[idx + 1], (uint(1000 * weight * ws[1]) << 16) | uint(255 * ws[1]));
-					atomicAdd(sampleWeights[idx + screenSize.x], (uint(1000 * weight * ws[2]) << 16) | uint(255 * ws[2]));
-					atomicAdd(sampleWeights[idx + screenSize.x + 1], (uint(1000 * weight * ws[3]) << 16) | uint(255 * ws[3]));
-				}
-
-				atomicAdd(pointsSplatted, 1);
+				atomicAdd(pointsSplatted, 1); // TODO DEBUG HACK REMOVE!
 			}
 			));
 		}
@@ -637,6 +632,7 @@ int main() {
 		glUniform3i("noiseOffset", rand() % 64, rand() % 64, noiseLayer);
 		bindTexture("noiseTextures", noiseTextures);
 		glUniform3f("sunDirection", sunDirection.x, sunDirection.y, sunDirection.z);
+		glUniform3f("sunColor", sunColor.x, sunColor.y, sunColor.z);
 		bindBuffer("cameraArray", cameraData);
 		glDispatchCompute(numberOfPointsToSplat / 128 / 1, 1, 1);
 
@@ -784,6 +780,8 @@ int main() {
 					uniform int frame;
 					uniform ivec3 noiseOffset;
 					uniform sampler2DArray noiseTextures;
+                    uniform vec3 sunDirection;
+                    uniform vec3 sunColor;
 
 					// https://gamedev.stackexchange.com/a/148088
 					vec3 linearToSRGB(vec3 linearRGB)
@@ -951,6 +949,7 @@ int main() {
 		glUniform1f("secs", secs);
 		glUniform2i("screenSize", screenw, screenh);
 		glUniform3f("sunDirection", sunDirection.x, sunDirection.y, sunDirection.z);
+		glUniform3f("sunColor", sunColor.x, sunColor.y, sunColor.z);
 		bindTexture("noiseTextures", noiseTextures);
 		bindBuffer("colorBuffer", colorBuffer);
 		bindImage("edgebuffer", 0, edgebuffer, GL_READ_WRITE, GL_R8); // TODO should be just GL_WRITE
