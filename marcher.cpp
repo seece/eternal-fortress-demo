@@ -78,6 +78,7 @@ vec2 getRandomJitter()
 
 struct Shot {
 	// static
+	std::string name;
 	std::string camName;
 	float start = 0.f;
 	// dynamic state
@@ -105,17 +106,28 @@ static std::vector<Shot> loadShots()
 	FILE* fp = fopen("assets/shots.txt", "r");
 	if (fp) {
 		int num = 10;
+		int idx = 0;
 		while (num >= 2) {
 			Shot s = {};
-			char name[128] = { '\0' };
+			char camname[128] = { '\0' };
+			char shotname[128] = { '\0' };
 			num = fscanf(fp, "%f %127s\n",
 				&s.start,
-				name
+				camname
 			);
 			if (num >= 2) {
-				s.camName = name;
+				s.camName = camname;
+				//printf("loaded shot %s\n", name);
+			}
+			if (num >= 3) {
+				s.name = shotname;
+			}
+			else {
+				s.name = "shot" + std::to_string(idx);
+			}
+			if (num >= 2) {
 				news.push_back(s);
-				printf("loaded shot %s\n", name);
+				idx++;
 			}
 
 		}
@@ -388,7 +400,6 @@ int main() {
 			std::vector<CameraPose> newPoses = loadPoses();
 			if (newPoses.size() > 0) {
 				cameraPoses = newPoses;
-				printf("Loaded %d new poses\n", newPoses.size());
 			}
 			std::vector<Shot> newShots = loadShots();
 			if (newShots.size() > 0) {
@@ -1059,9 +1070,10 @@ int main() {
 			font.drawText(L"Points: " + std::to_wstring(pointsSplatted / 1000. / 1000.) + L" M", 200.f, 10.f, 15.f);
 			font.drawText(L"Music: " + std::to_wstring(music.getTime()) + L" s", 200.f, 25.f, 15.f);
 			{
-				std::wstring ws;
+				std::wstring ws, ws2;
 				ws.assign(currentShot.camName.begin(), currentShot.camName.end());
-				font.drawText(L"ShotCam: " + ws + L" @ " + std::to_wstring(currentShot.relative) + L" s", 200.f, 40.f, 15.f);
+				ws2.assign(currentShot.name.begin(), currentShot.name.end());
+				font.drawText(L"Shot/Cam: " + ws + L"/" + ws2 + L" @ " + std::to_wstring(currentShot.relative) + L" s", 200.f, 40.f, 15.f);
 			}
 			font.drawText(interactive ? L"Interactive pose" : L"Cam track pose", 200.f, 55.f, 15.f);
 			font.drawText(L"dt: " + std::to_wstring(dt) + L" s", 200.f, 70.f, 15.f);

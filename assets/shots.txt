@@ -1,3 +1,10 @@
 0. floaters
 10 sculpture
 12.5 central_shaft
+63 sculpture
+75 central_shaft
+98 sidestructures
+120 floaters
+131 backpromenade
+148 backpromenade
+155 central
