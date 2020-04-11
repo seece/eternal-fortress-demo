@@ -7,10 +7,12 @@
 #include <deque>
 #include <chrono>
 
+#define FINALBUILD 1
+
 #ifdef FINALBUILD 
 const int screenw = 1920, screenh = 1080;
 #else
-const int screenw = 1280, screenh = 720;
+const int screenw = 1920, screenh = 1080;
 #endif
 constexpr int MAX_POINT_COUNT = 10. * screenw * screenh;
 static constexpr GLuint SAMPLE_BUFFER_TYPE = GL_RGBA16F;
@@ -220,7 +222,7 @@ int main() {
 #ifdef FINALBUILD
 	full = true;
 #endif
-	OpenGL context(screenw, screenh, "raymarcher", full);
+	OpenGL context(screenw, screenh, "ETERNAL FORTRESS", full);
 	
 	// load a font to draw text with -- any system font or local .ttf file should work
 	Font nicefont(L"Georgia");
@@ -423,7 +425,12 @@ int main() {
 	GLint64 jumpBufferSize = -1;
 	glGetNamedBufferParameteri64v(jumpbuffer, GL_BUFFER_SIZE, &jumpBufferSize);
 	printf("jumpBuffer size: %" PRId64 " bytes = %.3f MiB\n", jumpBufferSize, jumpBufferSize / 1024. / 1024.);
-	
+
+#ifdef FINALBUILD
+	while (ShowCursor(false) >= 0);
+	Sleep(1000);
+#endif
+
 	Music music(L"assets/final3_fraktals.wav");
 	reloadAnimations(music);
 	music.play();
@@ -1380,14 +1387,13 @@ int main() {
 
 		if (secs >= 169) {
 			float x = screenw / 16.f;
-			float line = 40.f;
-			float y = screenh - x*.75 - line * 4;
-			float sz = 32.f;
+			float line = 40.f * (screenh / 720.);
+			float y = screenh - x*.5 - line * 3;
+			float sz = 32.f * (screenh/720.);
 			
 			nicefont.drawText(L"ETERNAL FORTRESS", x, y, sz);
 			nicefont.drawText(L"visuals: pekka (cce)", x, y + line, sz);
 			nicefont.drawText(L"music: miika", x, y + line * 2, sz);
-			nicefont.drawText(L"engine: pauli (msqrt)", x, y + line*3, sz);
 		}
 
 		// this actually displays the rendered image

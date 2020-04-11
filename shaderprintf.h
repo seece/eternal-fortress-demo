@@ -32,6 +32,8 @@ inline GLuint createPrintBuffer(unsigned size = 16 * 1024 * 1024) {
 	GLuint printBuffer;
 	glCreateBuffers(1, &printBuffer);
 	glNamedBufferData(printBuffer, size * sizeof(unsigned), nullptr, GL_STREAM_READ);
+	int zero = 0;
+	glClearNamedBufferData(printBuffer, GL_R32I, GL_RED_INTEGER, GL_INT, &zero);
 	return printBuffer;
 }
 
@@ -59,7 +61,7 @@ inline void bindPrintBuffer(GLuint program, GLuint printBuffer) {
 inline std::string getPrintBufferString(GLuint printBuffer) {
 
 	// get the size of what we want to read and the size of the print buffer
-	unsigned printedSize, bufferSize;
+	unsigned printedSize = 0, bufferSize = 0;
 	glGetNamedBufferSubData(printBuffer, 0, sizeof(unsigned), &printedSize);
 	glGetNamedBufferParameteriv(printBuffer, GL_BUFFER_SIZE, (GLint*)&bufferSize);
 	bufferSize /= sizeof(unsigned);
@@ -69,11 +71,11 @@ inline std::string getPrintBufferString(GLuint printBuffer) {
 		printedSize = bufferSize;
 
 	// this vector will hold the CPU copy of the print buffer
-	std::vector<unsigned> printfData(printedSize + 1);
+	std::vector<unsigned> printfData(printedSize + 1, 0);
 	printfData[0] = printedSize;
 
 	// get the rest of the buffer data (the actual text)
-	glGetNamedBufferSubData(printBuffer, sizeof(unsigned), GLsizei((printfData.size() - 1) * sizeof(unsigned)), printfData.data() + 1);
+	glGetNamedBufferSubData(printBuffer, sizeof(unsigned), GLsizei((printfData.size() - 2) * sizeof(unsigned)), printfData.data() + 1);
 
 	// the final string we're going to build
 	std::string result;
