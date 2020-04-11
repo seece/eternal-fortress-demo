@@ -1011,6 +1011,7 @@ int main() {
                     uniform vec3 sunColor;
                     uniform vec3 fogColor;
                     uniform vec3 fogScatterColor;
+                    uniform int sceneID;
 
 					// https://gamedev.stackexchange.com/a/148088
 					vec3 linearToSRGB(vec3 linearRGB)
@@ -1106,7 +1107,12 @@ int main() {
                         float alpha = float(fixedAlpha) / 255.;
                         alpha += weight*.1;
 
-                        alpha = pow(min(1., alpha/2), 0.5);
+                        //alpha = pow(min(1., alpha/2), 0.5);
+                        if (sceneID == 0) {
+                            alpha = pow(min(1., alpha/2), 0.5);
+                        } else {
+                            alpha = pow(min(1., alpha/3), 0.1);
+                        }
 
                         uint packedColor1 = colors[pixelIdx*2];
                         uint packedColor2 = colors[pixelIdx*2+1];
@@ -1133,14 +1139,41 @@ int main() {
                         uv.y /= cameras[1].aspect;
                         getCameraProjection(cameras[1], uv, p, dir);
 
+                        if (sceneID == 43) { 
+                            //color = vec3(color.r * color.g * 100.);
+                            color = mix(vec3(pow(color.r*3., 1.5)), color, 0.3);
+                            color.b *= 0.6;
+                            color.g *= 0.8;
+                            color = 1.*pow(color*2., vec3(1.1)); // inside
+                            //color = 2.*pow(color*10., vec3(2.0)); // inside
+                        }
+                        else if (sceneID == 77) {
+                            float sw = gl_FragCoord.y / screenSize.y;
+                            color.r *= 0.3 + .7*sw;
+                            color = pow(color*1.3, vec3(1.1));
+                        } else if (sceneID == 94) { // shaft2
+                            color = pow(color*1.2, vec3(1.3));
+                            float sw = 1. - gl_FragCoord.y / screenSize.y;
+                            color.g *= mix(1., sw, 0.7);
+                            color.b *= mix(1., sw, 0.8);
+                        } else if (sceneID == 83) { // top
+                            color = pow(color, vec3(2.0));
+                            color += vec3(0.01);
+
+                        } else if (sceneID == 102) { // incas
+                            color.b += 20.*pow(color.b, 2.);
+                            color = pow(color, vec3(1.1));
+                            color *= 0.1 + pow(1.0-abs(0.5-uv.x), 3.);
+                        } else if (sceneID == 140) color = 2.*pow(color*8., vec3(2.0)); // cemetry
+                        else if (sceneID == 159) color = 2.*pow(color*4., vec3(1.7)); // central
+                        else color = pow(color, vec3(1.2));
+
                         vec3 skyColor = sampleSky(dir);
                         vec3 c = mix(skyColor, color, alpha);
 
-                        vec3 srgb = linearToSRGB(c.rgb);
-                        vec3 noise = 1./255. * getNoise(ivec2(gl_FragCoord.xy));
-                        srgb += noise;
+
                         //outColor = vec4(srgb, 1.); // TODO move conversion to present
-                        imageStore(resolved, ivec2(gl_FragCoord.xy), vec4(srgb, 1.));
+                        imageStore(resolved, ivec2(gl_FragCoord.xy), vec4(c, 1.));
 
                         // Clear the accumulation buffer
                         colors[pixelIdx*2] = 0;
@@ -1159,7 +1192,8 @@ int main() {
 		glUniform3f("sunDirection", sunDirection.x, sunDirection.y, sunDirection.z);
 		glUniform3f("sunColor", sunColor.x, sunColor.y, sunColor.z);
 		glUniform3f("fogColor", fogColor.x, fogColor.y, fogColor.z);
-		glUniform3f("fogScatterColor", fogScatterColor.x, fogScatterColor.y, fogScatterColor.z);
+		glUniform1i("sceneID", int(currentShot.start));
+
 		bindTexture("noiseTextures", noiseTextures);
 		bindTexture("skybox", skyboxCubemap);
 		bindBuffer("colorBuffer", colorBuffer);
@@ -1201,9 +1235,9 @@ int main() {
                     if (dir == 1) ofs = ofs.yx;
                     float w = weights[i];
 				    vec3 s = texelFetch(inputTexture, base+ofs, 0).rgb;
-                    s = max(vec3(0.), s - vec3(0.3));
+                    //s = max(vec3(0.), s - vec3(0.05));
                     //s = pow(s, vec3(2.));
-                    s += .5 * vec3(max(s.g, max(s.r, s.g)));
+                    //s += .5 * vec3(max(s.g, max(s.r, s.g)));
                     //vec3 s = vec3(0.);
                     c += w * s;
                     sum += w;
@@ -1233,6 +1267,20 @@ int main() {
 		glDrawArrays(GL_TRIANGLES, 0, 3);
 		glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 
+		// horziontal  pass2
+		bindImage("outputImage", 0, bloombuffer, GL_WRITE_ONLY, GL_RGBA16F);
+		bindTexture("inputTexture", bloombuffer2);
+		glUniform1i("dir", 0);
+		glDrawArrays(GL_TRIANGLES, 0, 3);
+		glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+
+		// vertical  pass2
+		bindImage("outputImage", 0, bloombuffer2, GL_WRITE_ONLY, GL_RGBA16F);
+		bindTexture("inputTexture", bloombuffer);
+		glUniform1i("dir", 1);
+		glDrawArrays(GL_TRIANGLES, 0, 3);
+		glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+
 
 		if (!present)
 			present = createProgram(
@@ -1243,6 +1291,8 @@ int main() {
 				),
 				"", "", "",
 					GLSL(460,
+                uniform sampler2DArray noiseTextures;
+                uniform ivec3 noiseOffset;
 
 					out vec4 outColor;
 					uniform ivec2 screenSize;
@@ -1250,18 +1300,45 @@ int main() {
 					uniform sampler2D bloom;
 					uniform float secs;
 					uniform int sceneID;
+                    //
+					// https://gamedev.stackexchange.com/a/148088
+					vec3 linearToSRGB(vec3 linearRGB)
+					{
+						bvec3 cutoff = lessThan(linearRGB, vec3(0.0031308));
+						vec3 higher = vec3(1.055)*pow(linearRGB, vec3(1.0 / 2.4)) - vec3(0.055);
+						vec3 lower = linearRGB * vec3(12.92);
+
+						return mix(higher, lower, cutoff);
+					}
+
+            vec3 getNoise(ivec2 coord, int ofs = 0)
+            {
+                return texelFetch(noiseTextures,
+                        ivec3((coord.x + noiseOffset.x) % 64, (coord.y + noiseOffset.y) % 64, (noiseOffset.z + ofs) % 64), 0).rgb;
+            }
 
                     void main() {
 						vec3 c = texelFetch(resolved, ivec2(gl_FragCoord.xy), 0).rgb;
 						vec3 add = texelFetch(bloom, ivec2(gl_FragCoord.xy), 0).rgb;
-                        outColor = vec4(c + add,1.);
+                        //add = add / (vec3(1.) + add);
+                        //add = max(vec3(0.), add - vec3(0.01));
+                        c += .10 * pow(add, vec3(1.2));
+                        //c += add;
+
+                        vec3 srgb = linearToSRGB(c.rgb);
+                        vec3 noise = 1./255. * (vec3(-.3) + .5*getNoise(ivec2(gl_FragCoord.xy), 1));
+                        srgb += noise;
+
+                        outColor = vec4(srgb,1.);
                     }
                     ));
 
 		glUseProgram(present);
 
 		bindTexture("resolved", resolved);
-		bindTexture("bloom", bloombuffer);
+		bindTexture("bloom", bloombuffer2);
+		bindTexture("noiseTextures", noiseTextures);
+		glUniform3i("noiseOffset", rand() % 64, rand() % 64, noiseLayer);
 		glUniform1i("frame", frame);
 		glUniform1f("secs", secs);
 		glUniform1i("sceneID", int(currentShot.start));
