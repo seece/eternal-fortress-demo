@@ -28,6 +28,7 @@ const int MATERIAL_OTHER = 1;
 uniform int source;
 uniform int frame;
 uniform float secs;
+uniform float sceneID;
 uniform ivec2 screenSize;
 uniform vec2 screenBoundary;
 uniform vec2 cameraJitter;
@@ -57,7 +58,8 @@ struct CameraParams {
 struct RgbPoint {
     vec3 xyz;
     uint normalSpecularSun;
-    vec4 rgba;
+    vec3 rgba;
+    float sec;
 };
 
 uniform int pointBufferMaxElements;
@@ -735,7 +737,8 @@ void main() {
 
             points[myPointOffset].xyz = p;
             points[myPointOffset].normalSpecularSun = packUnorm4x8(vec4(packedNormal, shininess, sun));
-            points[myPointOffset].rgba = vec4(color, 1.);
+            points[myPointOffset].rgba = vec3(color);
+            points[myPointOffset].sec = sceneID;
         }
 
         //color = vec3(uv, pow(zdepth/10., 5.));

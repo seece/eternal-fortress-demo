@@ -1,7 +1,7 @@
 
-#include "testbench.h"
-#include "mp3music.h"
-#include "cameras.h"
+#include "../testbench.h"
+#include "../mp3music.h"
+#include "../cameras.h"
 #include <cinttypes>
 #include <cassert>
 #include <deque>
@@ -12,7 +12,7 @@
 #ifdef FINALBUILD 
 const int screenw = 1920, screenh = 1080;
 #else
-const int screenw = 1920, screenh = 1080;
+const int screenw = 1280, screenh = 720;
 #endif
 constexpr int MAX_POINT_COUNT = 10. * screenw * screenh;
 static constexpr GLuint SAMPLE_BUFFER_TYPE = GL_RGBA16F;
@@ -469,6 +469,7 @@ int main() {
 		}
 
 		float futureInterval = dt * 4;
+        double futureSecs = secs + futureInterval;
 
 		Shot futureShot = shotAtTime(secs + futureInterval);
 		Shot currentShot = shotAtTime(secs);
@@ -542,7 +543,8 @@ int main() {
 		vec2 cameraJitter = getRandomJitter() / float(max(screenw, screenh));
 
 		glUniform1i("frame", frame);
-		glUniform1f("secs", secs);
+        glUniform1f("secs", futureSecs);
+        glUniform1f("sceneID", futureShot.start);
 		glUniform2i("screenSize", screenw, screenh);
 		glUniform2f("screenBoundary", screenBoundary.x, screenBoundary.y);
 		glUniform2f("cameraJitter", cameraJitter.x, cameraJitter.y);
@@ -628,7 +630,8 @@ int main() {
             struct RgbPoint {
                 vec3 xyz;
                 uint normalSpecularSun;
-                vec4 rgba;
+                vec3 rgba;
+                float sec;
             };
 
             vec3 decodeNormal( vec2 f )
@@ -654,6 +657,7 @@ int main() {
             uniform vec3 sunColor;
             uniform vec3 fogColor;
             uniform vec3 fogScatterColor;
+            uniform float currentShotStart;
             uniform samplerCube skybox;
 			uniform sampler2DArray noiseTextures;
 
@@ -763,11 +767,11 @@ int main() {
 
 				unsigned int index = (baseIdx + invocationIdx) % pointBufferMaxElements;
 				vec3 pos = points[index].xyz;
-				vec4 color = points[index].rgba;
+				vec3 color = points[index].rgba;
 				vec3 c = color.rgb;
 
 				// Raymarcher never produces pure (0, 0, 0) hits.
-				if (pos == vec3(0.))
+				if (pos == vec3(0.) || points[index].sec != currentShotStart)
 					return;
 
                 vec3 fromCamToPoint;
@@ -865,6 +869,7 @@ int main() {
 		glUniform3f("sunColor", sunColor.x, sunColor.y, sunColor.z);
 		glUniform3f("fogColor", fogColor.x, fogColor.y, fogColor.z);
 		glUniform3f("fogScatterColor", fogScatterColor.x, fogScatterColor.y, fogScatterColor.z);
+        glUniform1f("currentShotStart", currentShot.start);
 		bindBuffer("cameraArray", cameraData);
 		glDispatchCompute(numberOfPointsToSplat / 128 / 1, 1, 1);
 
@@ -1379,7 +1384,7 @@ int main() {
 		if (secs >= music.getDuration() - 0.1) {
 			glClear(GL_COLOR_BUFFER_BIT);
 			#ifdef FINALBUILD 
-			if (secs >= music.getDuration()+2.) break;
+			break;
 			#endif
 		}
 
