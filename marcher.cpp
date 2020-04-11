@@ -200,7 +200,7 @@ static void reloadAnimations(Music& music)
 		shots = newShots;
 		Shot s;
 		s.start = music.getDuration();
-		s.camName = "floaters";
+		s.camName = "facade2";
 		shots.push_back(s);
 	}
 	std::map<std::string, CameraMove> newMoves = loadMoves();
@@ -455,8 +455,23 @@ int main() {
 		}
 		makeCamera(futurePose, cameras[1]);
 		glNamedBufferSubData(cameraData, 0, sizeof(cameras), &cameras);
-		vec3 sunDirection = normalize(vec3(-0.5f, -1.0f, 0.7f));
-		vec3 sunColor = vec3(1., 0.8, 0.5);
+		vec3 sunDirection;
+		vec3 sunColor;
+		vec3 fogColor;
+		vec3 fogScatterColor;
+
+		if (secs >= 122.) {
+			sunDirection = normalize(vec3(-0.4, 1., 0.0));
+			sunColor = vec3(0.1, 0.5, 0.3);
+			fogColor = vec3(0.f, 0.0f, 0.01f);
+			fogScatterColor = vec3(0.1f, 0.3f, 0.2f);
+		}
+		else {
+			sunDirection = normalize(vec3(-0.5f, -1.0f, 0.7f));
+			sunColor = vec3(1., 0.8, 0.5);
+			fogColor = .5f*vec3(0.5, 0.5, 0.7);
+			fogScatterColor = vec3(1., 0.5, 0.1);
+		}
 
 		if (controls) {
 			float seekTime = 1.f;
@@ -504,6 +519,8 @@ int main() {
 		glUniform2f("cameraJitter", cameraJitter.x, cameraJitter.y);
 		glUniform3f("sunDirection", sunDirection.x, sunDirection.y, sunDirection.z);
 		glUniform3f("sunColor", sunColor.x, sunColor.y, sunColor.z);
+		glUniform3f("fogColor", fogColor.x, fogColor.y, fogColor.z);
+		glUniform3f("fogScatterColor", fogScatterColor.x, fogScatterColor.y, fogScatterColor.z);
 		glUniform1i("pointBufferMaxElements", pointBufferMaxElements);
 		glUniform1i("jumpBufferMaxElements", jumpBufferMaxElements);
 		glUniform1i("rayIndexBufferMaxElements", rayIndexBufferMaxElements);
@@ -606,6 +623,8 @@ int main() {
 			uniform ivec3 noiseOffset;
             uniform vec3 sunDirection;
             uniform vec3 sunColor;
+            uniform vec3 fogColor;
+            uniform vec3 fogScatterColor;
             uniform samplerCube skybox;
 			uniform sampler2DArray noiseTextures;
 
@@ -680,14 +699,19 @@ int main() {
                     in vec3  rayOri,   // camera position
                     in vec3  rayDir )  // camera to point vector
             {
-                float b = 0.01;
+                float b = 0.05;
                 float c = 1.0;
-                float fogAmount = c * exp(-(rayOri.y)*b) * (1.0-exp( -distance*rayDir.y*b ))/rayDir.y;
+                float h = 25.;
+                rayOri.y *= -1;
+                float dy = -rayDir.y;
+                float fogAmount = c * exp(-(rayOri.y + h)*b) * (1.0-exp( -distance*dy*b ))/dy;
                 fogAmount = clamp(fogAmount, 0., 1.);
                 float scatter = pow(max(0., dot(rayDir, sunDirection)), 10.);
-                vec3  fogColor = mix(vec3(0.5,0.6,0.7), vec3(1., 0.8, 0.), scatter);
+                //vec3  fogColor = mix(vec3(0.5,0.5,0.7), vec3(1., 0.5, 0.1), scatter);
+                //vec3  fogColor = mix(vec3(0.5,0.5,0.7), vec3(1., 0.5, 0.1), scatter);
+                vec3  col = mix(fogColor, fogScatterColor, scatter);
 
-                return mix( rgb, fogColor, fogAmount );
+                return mix( rgb, col, fogAmount );
             }
 
 			void main()
@@ -737,8 +761,11 @@ int main() {
 
                 vec3 toCamera = normalize(-fromCamToPoint);
                 vec3 H = normalize(sunDirection + toCamera);
-                float specular = pow(max(0., dot(normal, H)), 10.);
-                c = mix(c, (specular * sun) * c, materialShininess);
+                vec3 R = reflect(normal, toCamera);
+                //vec3 specularColor = texture(skybox, R, -100).rgb;
+                float specular = 10. * pow(max(0., dot(normal, H)), 50.);
+                //c = mix(c, (specular * specularColor * sunColor) * c, materialShininess);
+                c = mix(c, (specular * sunColor * c) * c, materialShininess);
                 //c = vec3(specular * sun);
 
 				float distance = length(fromCamToPoint);
@@ -807,6 +834,8 @@ int main() {
 		bindTexture("noiseTextures", noiseTextures);
 		glUniform3f("sunDirection", sunDirection.x, sunDirection.y, sunDirection.z);
 		glUniform3f("sunColor", sunColor.x, sunColor.y, sunColor.z);
+		glUniform3f("fogColor", fogColor.x, fogColor.y, fogColor.z);
+		glUniform3f("fogScatterColor", fogScatterColor.x, fogScatterColor.y, fogScatterColor.z);
 		bindBuffer("cameraArray", cameraData);
 		glDispatchCompute(numberOfPointsToSplat / 128 / 1, 1, 1);
 
@@ -957,6 +986,8 @@ int main() {
                     uniform samplerCube skybox;
                     uniform vec3 sunDirection;
                     uniform vec3 sunColor;
+                    uniform vec3 fogColor;
+                    uniform vec3 fogScatterColor;
 
 					// https://gamedev.stackexchange.com/a/148088
 					vec3 linearToSRGB(vec3 linearRGB)
@@ -989,9 +1020,32 @@ int main() {
                         return uv;
                     }
 
+                    vec3 applyFog( in vec3  rgb,      // original color of the pixel
+                            in float distance, // camera to point distance
+                            in vec3  rayOri,   // camera position
+                            in vec3  rayDir )  // camera to point vector
+                    {
+                        //float b = 0.05;
+                        //float c = 1.0;
+                        //float h = 25.;
+                        //rayOri.y *= -1;
+                        //float dy = -rayDir.y;
+                        //float fogAmount = c * exp(-(rayOri.y + h)*b) * (1.0-exp( -distance*dy*b ))/dy;
+                        //fogAmount = clamp(fogAmount, 0., 1.);
+                        float scatter = pow(max(0., dot(rayDir, sunDirection)), 10.);
+                        vec3  col = mix(fogColor, fogScatterColor, scatter);
+
+                        return col; //mix( rgb, col, fogAmount );
+                    }
+
                     vec3 sampleSky(vec3 dir) {
+                        if (length(fogColor) < 0.1)
+                            return vec3(0.);
                         vec3 c = texture(skybox, dir).rgb;
                         c = 3.*pow(c, vec3(1.5));
+
+                        float scatter = pow(max(0., dot(dir, sunDirection)), 10.);
+                        vec3 fog = mix(fogColor, fogScatterColor, scatter);
 
                         float d = dot(dir, sunDirection);
                         /*
@@ -1006,11 +1060,12 @@ int main() {
                         //return c * (base + vec3(disc) + shine * sunColor);
                         */
                         float ground = pow(max(0., 1.*dir.y), 10.);
-                        float sky = pow(-min(0., dir.y)+0.5, 1.);
+                        float sky = min(1., max(0., pow(-min(0., dir.y-0.7), 4.)));
                         float horizon = pow(1-abs(dir.y+0.2), 20.);
                         //return mix(c.bgr, 0.005*vec3(0.3, 0.3, 0.5), ground);
                         //return mix(vec3(0., 1., 0.), c.bgr, sky);
-                        return c.bgr;
+                        vec3 bg = c.bgr;
+                        return (sky) * bg + (1.-sky)*fog; //mix(fog, bg, sky);
                     }
 
                     void main() {
@@ -1079,6 +1134,8 @@ int main() {
 		glUniform2i("screenSize", screenw, screenh);
 		glUniform3f("sunDirection", sunDirection.x, sunDirection.y, sunDirection.z);
 		glUniform3f("sunColor", sunColor.x, sunColor.y, sunColor.z);
+		glUniform3f("fogColor", fogColor.x, fogColor.y, fogColor.z);
+		glUniform3f("fogScatterColor", fogScatterColor.x, fogScatterColor.y, fogScatterColor.z);
 		bindTexture("noiseTextures", noiseTextures);
 		bindTexture("skybox", skyboxCubemap);
 		bindBuffer("colorBuffer", colorBuffer);
