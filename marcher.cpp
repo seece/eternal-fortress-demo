@@ -228,7 +228,7 @@ int main() {
 
 	// shader variables; could also initialize them here, but it's often a good idea to
 	// do that at the callsite (so input/output declarations are close to the bind code)
-	Program march, edgeDetect, draw, sampleResolve, headerUpdate, pointSplat;
+	Program march, edgeDetect, draw, sampleResolve, headerUpdate, pointSplat, bloom , present;
 
 	std::wstring noisePaths[] = {
 		L"assets/bluenoise/LDR_RGB1_0.png",
@@ -314,6 +314,9 @@ int main() {
 	Texture<GL_TEXTURE_2D> gbuffer;
 	Texture<GL_TEXTURE_2D> zbuffer;
 	Texture<GL_TEXTURE_2D> edgebuffer;
+	Texture<GL_TEXTURE_2D> resolved;
+	Texture<GL_TEXTURE_2D> bloombuffer;
+	Texture<GL_TEXTURE_2D> bloombuffer2;
 	Texture<GL_TEXTURE_2D_ARRAY> samplebuffer;
 	Texture<GL_TEXTURE_2D_ARRAY> jitterbuffer;
 	Buffer cameraData;
@@ -331,11 +334,17 @@ int main() {
 	setWrapToClamp(gbuffer);
 	setWrapToClamp(zbuffer);
 	setWrapToClamp(samplebuffer);
+	setWrapToClamp(resolved);
+	setWrapToClamp(bloombuffer);
+	setWrapToClamp(bloombuffer2);
 
 	int renderw = screenw, renderh = screenh;
 
 	glTextureStorage3D(abuffer, 1, GL_RGBA32F, screenw, screenh, 2);
 	glTextureStorage2D(gbuffer, 1, GL_RGBA32F, renderw, renderh);
+	glTextureStorage2D(resolved, 1, GL_RGBA16F, renderw, renderh);
+	glTextureStorage2D(bloombuffer, 1, GL_RGBA16F, renderw, renderh);
+	glTextureStorage2D(bloombuffer2, 1, GL_RGBA16F, renderw, renderh);
 	glTextureStorage2D(edgebuffer, 1, GL_R8, renderw, renderh);
 	glTextureStorage2D(zbuffer, 1, GL_R32F, renderw, renderh);
 	glTextureStorage3D(samplebuffer, 1, SAMPLE_BUFFER_TYPE, renderw, renderh, 1);
@@ -987,6 +996,7 @@ int main() {
 					layout(std430) buffer colorBuffer { uint colors[]; };
 					layout(std430) buffer sampleWeightBuffer { uint sampleWeights[]; };
 					layout(r8) uniform image2D edgebuffer;
+					layout(rgba16f) uniform image2D resolved;
 					layout(std430) buffer jumpBuffer { float jumps[]; };
 					layout(std430) buffer radiusBuffer { float radiuses[]; };
                     layout(std430) buffer uvBuffer { vec2 debug_uvs[]; };
@@ -1129,7 +1139,8 @@ int main() {
                         vec3 srgb = linearToSRGB(c.rgb);
                         vec3 noise = 1./255. * getNoise(ivec2(gl_FragCoord.xy));
                         srgb += noise;
-                        outColor = vec4(srgb, 1.);
+                        //outColor = vec4(srgb, 1.); // TODO move conversion to present
+                        imageStore(resolved, ivec2(gl_FragCoord.xy), vec4(srgb, 1.));
 
                         // Clear the accumulation buffer
                         colors[pixelIdx*2] = 0;
@@ -1152,6 +1163,7 @@ int main() {
 		bindTexture("noiseTextures", noiseTextures);
 		bindTexture("skybox", skyboxCubemap);
 		bindBuffer("colorBuffer", colorBuffer);
+		bindImage("resolved", 0, resolved, GL_WRITE_ONLY, GL_RGBA16F);
 		bindImage("edgebuffer", 0, edgebuffer, GL_READ_WRITE, GL_R8); // TODO should be just GL_WRITE
 		bindBuffer("sampleWeightBuffer", sampleWeightBuffer);
 		bindBuffer("jumpBuffer", jumpbuffer);
@@ -1159,6 +1171,103 @@ int main() {
 		bindBuffer("uvBuffer", uvbuffer);
 		bindBuffer("cameraArray", cameraData);
 		glDrawArrays(GL_TRIANGLES, 0, 3);
+		glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+
+		if (!bloom)
+			bloom = createProgram(
+				GLSL(460,
+					void main() {
+			gl_Position = vec4(gl_VertexID == 1 ? 4. : -1., gl_VertexID == 2 ? 4. : -1., -.5, 1.);
+		}
+		),
+				"", "", "",
+			GLSL(460,
+			uniform ivec2 screenSize;
+			uniform sampler2D inputTexture;
+			uniform float secs;
+			uniform int sceneID;
+			uniform int dir;
+			layout(rgba16f) uniform image2D outputImage;
+
+			void main() {
+				//vec3 c = texelFetch(inputTexture, ivec2(gl_FragCoord.xy), 0).rgb;
+                //float weights[] = {0.000229, 0.005977, 0.060598, 0.241732, 0.382928, 0.241732, 0.060598, 0.005977, 0.000229};
+                float weights[] = {0.035822, 0.05879, 0.086425, 0.113806, 0.13424, 0.141836, 0.13424, 0.113806, 0.086425, 0.05879, 0.035822};
+                ivec2 base = ivec2(gl_FragCoord.xy);
+                vec3 c = vec3(0.);
+                float sum = 0.;
+                for (int i=0;i<weights.length;i++) {
+                    ivec2 ofs = ivec2(i - weights.length/2, 0);
+                    if (dir == 1) ofs = ofs.yx;
+                    float w = weights[i];
+				    vec3 s = texelFetch(inputTexture, base+ofs, 0).rgb;
+                    s = max(vec3(0.), s - vec3(0.3));
+                    //s = pow(s, vec3(2.));
+                    s += .5 * vec3(max(s.g, max(s.r, s.g)));
+                    //vec3 s = vec3(0.);
+                    c += w * s;
+                    sum += w;
+                }
+                c /= sum;
+				imageStore(outputImage, ivec2(gl_FragCoord.xy), vec4(c, 1.));
+			}
+			));
+
+		glUseProgram(bloom);
+
+		// horizontal pass
+		bindImage("outputImage", 0, bloombuffer2, GL_WRITE_ONLY, GL_RGBA16F);
+		bindTexture("inputTexture", resolved);
+		glUniform1i("frame", frame);
+		glUniform1f("secs", secs);
+		glUniform1i("sceneID", int(currentShot.start));
+		glUniform1i("dir", 0);
+		//bindTexture("skybox", skyboxCubemap);
+		glDrawArrays(GL_TRIANGLES, 0, 3);
+		glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+
+		// vertical pass
+		bindImage("outputImage", 0, bloombuffer, GL_WRITE_ONLY, GL_RGBA16F);
+		bindTexture("inputTexture", bloombuffer2);
+		glUniform1i("dir", 1);
+		glDrawArrays(GL_TRIANGLES, 0, 3);
+		glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+
+
+		if (!present)
+			present = createProgram(
+				GLSL(460,
+					void main() {
+						gl_Position = vec4(gl_VertexID == 1 ? 4. : -1., gl_VertexID == 2 ? 4. : -1., -.5, 1.);
+					}
+				),
+				"", "", "",
+					GLSL(460,
+
+					out vec4 outColor;
+					uniform ivec2 screenSize;
+					uniform sampler2D resolved;
+					uniform sampler2D bloom;
+					uniform float secs;
+					uniform int sceneID;
+
+                    void main() {
+						vec3 c = texelFetch(resolved, ivec2(gl_FragCoord.xy), 0).rgb;
+						vec3 add = texelFetch(bloom, ivec2(gl_FragCoord.xy), 0).rgb;
+                        outColor = vec4(c + add,1.);
+                    }
+                    ));
+
+		glUseProgram(present);
+
+		bindTexture("resolved", resolved);
+		bindTexture("bloom", bloombuffer);
+		glUniform1i("frame", frame);
+		glUniform1f("secs", secs);
+		glUniform1i("sceneID", int(currentShot.start));
+		//bindTexture("skybox", skyboxCubemap);
+		glDrawArrays(GL_TRIANGLES, 0, 3);
+
 
 		// here we're just using two timestamps, but you could of course measure intermediate timings as well
 		TimeStamp end;

@@ -201,12 +201,12 @@ Texture<GL_TEXTURE_CUBE_MAP> loadCubeMap(const std::wstring* paths, int count, b
 		((Bitmap*)&image)->UnlockBits(&data);
 	}
 
+	glGenerateMipmap(GL_TEXTURE_CUBE_MAP);
 	glTextureParameteri(result, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 	glTextureParameteri(result, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 	glTextureParameteri(result, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-	glTextureParameteri(result, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTextureParameteri(result, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_NEAREST);
 	glTextureParameteri(result, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
 	GdiplusShutdown(token);
 	return result;
 }
