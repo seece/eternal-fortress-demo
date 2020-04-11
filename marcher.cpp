@@ -156,9 +156,11 @@ Shot shotAtTime(float secs) {
 static void cameraPath(const Shot& shot, CameraPose& outPose)
 {
 	CameraPose pose = {};
+	int poseid = 0;
 	for (int i = 0; i < cameraPoses.size(); i++) {
 		if (cameraPoses[i].name == shot.camName) {
 			pose = cameraPoses[i];
+			poseid = i;
 			break;
 		}
 		if (i == cameraPoses.size() - 1) printf("Error! No camera found: %s\n", shot.camName.c_str());
@@ -170,6 +172,7 @@ static void cameraPath(const Shot& shot, CameraPose& outPose)
 	}
 
 	float t = shot.relative;
+	float tuniq = shot.relative + poseid * 31.3;
 	pose.pos += t * move.axis;
 	pose.pos += t * pose.dir * move.forward;
 	float tt = t * 0.1f;
@@ -178,9 +181,9 @@ static void cameraPath(const Shot& shot, CameraPose& outPose)
 	//pose.zoom = 0.5f;
 
 	pose.dir += move.shake * 0.01f*vec3(
-		pow(cos(t*0.8), 3.0f),
-		0.6f*pow(sin(t*1.4f), 3.0f),
-		pow(sin(t*1.0f + sin(t)), 1.0f));
+		pow(cos(tuniq*0.8), 3.0f),
+		0.6f*pow(sin(tuniq*1.4f), 3.0f),
+		pow(sin(tuniq*1.0f + sin(tuniq)), 1.0f));
 	pose.dir = normalize(pose.dir);
 
 	outPose = pose;
@@ -469,7 +472,10 @@ int main() {
 			if (keyHit(VK_SPACE)) music.togglePlaying();
 			if (keyHit(VK_BACK)) music.seek(0.);
 			if (keyHit(0x4D)) music.setVolume(music.getVolume() > -100. ? -100. : 0.);
-			if (keyHit(VK_RETURN)) interactive = !interactive;
+			if (keyHit(VK_F2)) interactive = !interactive;
+			if (keyHit(VK_RETURN)) {
+				music.seek(currentShot.start);
+			}
 		}
 
 		float zeroFloat = 0.f;
