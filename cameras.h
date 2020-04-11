@@ -14,12 +14,51 @@ struct CameraParameters {
 	float padding3;
 };
 
-struct CameraPose {
-	vec3 pos;
-	vec3 dir;
-	float zoom;
-	std::string name;
+struct CameraMove {
+	vec3 axis{ 0.f, 0.f };
+	float forward = 0.;
+	float shake = 0.;
+	vec2 param{ 0.f, 0.f };
 };
+
+struct CameraPose {
+	vec3 pos{ 0.f, 0.f, 0.f };
+	vec3 dir{ 0.f, 0.f, -1.f };
+	float zoom = 1.f;
+	std::string name;
+	CameraMove move;
+};
+
+static std::map<std::string, CameraMove> loadMoves()
+{
+	std::map<std::string, CameraMove> newMoves;
+	FILE* fp = fopen("assets/moves.txt", "r");
+	if (fp) {
+		int num = 10;
+		while (num >= 8) {
+			CameraMove m = {};
+			float theta = 0.f, phi = 0.f;
+			char name[128] = { '\0' };
+			num = fscanf(fp, "%127s %f %f %f %f %f %f %f\n",
+				name,
+				&m.axis.x,
+				&m.axis.y,
+				&m.axis.z,
+				&m.forward,
+				&m.shake,
+				&m.param.x,
+				&m.param.y
+			);
+			if (num >= 8) {
+				std::string poseName(name);
+				newMoves[poseName] = m;
+			}
+
+		}
+		fclose(fp);
+	}
+	return newMoves;
+}
 
 static std::vector<CameraPose> loadPoses()
 {

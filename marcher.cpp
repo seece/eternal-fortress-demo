@@ -91,6 +91,7 @@ struct Shot {
 static std::vector<Shot> shots;
 static std::map<std::string, Shot&> shotNames;
 static std::vector<CameraPose> cameraPoses;
+static std::map<std::string, CameraMove> cameraMoves;
 
 static CameraPose* findPose(const std::string& name) {
 	for (CameraPose& p : cameraPoses) {
@@ -154,7 +155,7 @@ Shot shotAtTime(float secs) {
 
 static void cameraPath(const Shot& shot, CameraPose& outPose)
 {
-	CameraPose pose;
+	CameraPose pose = {};
 	for (int i = 0; i < cameraPoses.size(); i++) {
 		if (cameraPoses[i].name == shot.camName) {
 			pose = cameraPoses[i];
@@ -162,13 +163,47 @@ static void cameraPath(const Shot& shot, CameraPose& outPose)
 		}
 		if (i == cameraPoses.size() - 1) printf("Error! No camera found: %s\n", shot.camName.c_str());
 	}
-	
-	float tt = shot.relative * 0.1f;
+
+	CameraMove move = {};
+	if (cameraMoves.find(shot.camName) != cameraMoves.end()) {
+		move = cameraMoves[shot.camName];
+	}
+
+	float t = shot.relative;
+	pose.pos += t * move.axis;
+	pose.pos += t * pose.dir * move.forward;
+	float tt = t * 0.1f;
 	//pose.pos = vec3(0. + 2.0 * sin(tt), -4., 7.f + 0.1f*cos(tt));
 	//pose.dir = normalize(vec3(0.9f*cos(tt*0.5f), 0.3 + 0.9f*sin(tt), -1.f));
 	//pose.zoom = 0.5f;
 
+	pose.dir += move.shake * 0.01f*vec3(
+		pow(cos(t*0.8), 3.0f),
+		0.6f*pow(sin(t*1.4f), 3.0f),
+		pow(sin(t*1.0f + sin(t)), 1.0f));
+	pose.dir = normalize(pose.dir);
+
 	outPose = pose;
+}
+
+static void reloadAnimations(Music& music)
+{
+	std::vector<CameraPose> newPoses = loadPoses();
+	if (newPoses.size() > 0) {
+		cameraPoses = newPoses;
+	}
+	std::vector<Shot> newShots = loadShots();
+	if (newShots.size() > 0) {
+		shots = newShots;
+		Shot s;
+		s.start = music.getDuration();
+		s.camName = "floaters";
+		shots.push_back(s);
+	}
+	std::map<std::string, CameraMove> newMoves = loadMoves();
+	if (newMoves.size() > 0) {
+		cameraMoves = newMoves;
+	}
 }
 
 int main() {
@@ -369,6 +404,7 @@ int main() {
 	printf("jumpBuffer size: %" PRId64 " bytes = %.3f MiB\n", jumpBufferSize, jumpBufferSize / 1024. / 1024.);
 	
 	Music music(L"assets/final3_fraktals.wav");
+	reloadAnimations(music);
 	music.play();
 
 	bool interactive = false;
@@ -397,18 +433,7 @@ int main() {
 
 
 		if (frame == 0 || (controls && (frame % 4 == 0))) {
-			std::vector<CameraPose> newPoses = loadPoses();
-			if (newPoses.size() > 0) {
-				cameraPoses = newPoses;
-			}
-			std::vector<Shot> newShots = loadShots();
-			if (newShots.size() > 0) {
-				shots = newShots;
-				Shot s;
-				s.start = music.getDuration();
-				s.camName = "floaters";
-				shots.push_back(s);
-			}
+			reloadAnimations(music);
 		}
 
 		float futureInterval = dt * 4;
@@ -726,7 +751,7 @@ int main() {
 				c = clamp(c, vec3(0.), vec3(1.));
 
 				//float weight = max(0.1, min(1e3, 1. / (pow(camSpace.z / 3., 2.) + 0.001)));
-				float weight = max(0.1, min(1e3, 1. / (pow(camSpace.z / 3., 2.) + 0.001)));
+				float weight = max(0.1, min(1e1, 1. / (pow(camSpace.z / 3., 2.) + 0.001)));
                 const int weight_scale = 500;
 
                 vec2 w = fract(screenSpace);
@@ -995,8 +1020,9 @@ int main() {
                         uint fixedAlpha = weightAlphaPacked & 0x3fff;
                         float weight = float(fixedWeight) / 500.;
                         float alpha = float(fixedAlpha) / 255.;
+                        alpha += weight*.1;
 
-                        alpha = pow(min(1., alpha/3.), 0.5);
+                        alpha = pow(min(1., alpha/2), 0.5);
 
                         uint packedColor1 = colors[pixelIdx*2];
                         uint packedColor2 = colors[pixelIdx*2+1];
