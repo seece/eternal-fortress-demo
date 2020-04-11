@@ -33,6 +33,8 @@ uniform vec2 screenBoundary;
 uniform vec2 cameraJitter;
 uniform vec3 sunDirection;
 uniform vec3 sunColor;
+uniform vec3 fogColor;
+uniform vec3 fogScatterColor;
 uniform samplerCube skybox;
 uniform sampler2D skyIrradiance;
 
@@ -358,7 +360,7 @@ vec3 evalnormal_rough(vec3 p) {
                 ));
 }
 
-vec2 shadowMarch(inout vec3 p, vec3 rd, int num_iters, float w, float mint, float maxt) {
+vec2 shadowMarch(in vec3 p, vec3 rd, int num_iters, float w, float mint, float maxt) {
     vec3 ro = p;
     int i;
     float omega = 1.3;
@@ -683,6 +685,7 @@ void main() {
             vec3 roughNormal = evalnormal_rough(p);
             vec3 to_camera = normalize(cam.pos - p);
             vec3 to_light = sunDirection;
+            //to_light = normalize(vec3(-0.4, 1., 0.0));
 
             vec3 shadowRayPos = p + to_camera * 1e-4;
             const float maxShadowDist = 30.;
@@ -691,22 +694,33 @@ void main() {
             //sun = pow(shadowResult.y-0.1, 3.0);
 
             sun = pow(sun, 2.);
+            sun *= 4.;
 
-            float ambient = sampleAO(p, normal);
+            float ambient = max(0., sampleAO(p, normal));
             ambient = pow(ambient, 1.3);
 
             float facing = max(0., dot(normal, to_light));
 
             vec3 base = vec3(.5) + .5*vec3(sin(hitmat + vec3(0., .5, 1.)));
-            base *= 2.;
-            float shininess = mod(hitmat * 3.3, 1.0);
+            float shininess = mod(hitmat * 0.2 + 0.5, 1.0);
+            base = pow(base, vec3(1.3));
+            //shininess = pow(shininess, 1.);
+            if (hitmat == 2) {
+                //shininess = 1.0;
+            }
+            vec3 suncol = sunColor;
 
-            color = base * sun * vec3(facing);
-            vec3 skycolor = color = sampleSky(roughNormal);
-            //vec3 suncolor = vec3(1., 0.8, 0.5);
-            color = base * (ambient * skycolor + facing * sun * sunColor);
+            //color = base * sun * vec3(facing);
+            //vec3 skycolor = mix(vec3(1.), fogColor, .8) * sampleSky(roughNormal);
+            vec3 skycolor = sampleSky(roughNormal);
+            if (suncol.g > suncol.r) {
+                skycolor = suncol * 0.5;
+            }
+            color = base * (ambient * skycolor + facing * sun * suncol);
             //color=vec3(ambient);
             color = clamp(color, vec3(0.), vec3(2.));
+            //shininess = 1.;
+
             //shininess = 0.;
             //color *= 0.5;
             //color *= 0.;

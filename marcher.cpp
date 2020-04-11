@@ -7,7 +7,11 @@
 #include <deque>
 #include <chrono>
 
+#ifdef FINALBUILD 
+const int screenw = 1920, screenh = 1080;
+#else
 const int screenw = 1280, screenh = 720;
+#endif
 constexpr int MAX_POINT_COUNT = 10. * screenw * screenh;
 static constexpr GLuint SAMPLE_BUFFER_TYPE = GL_RGBA16F;
 static constexpr GLuint JITTER_BUFFER_TYPE = GL_RG8;
@@ -212,9 +216,14 @@ static void reloadAnimations(Music& music)
 int main() {
 
 	// create window and context. can also do fullscreen and non-visible window for compute only
-	OpenGL context(screenw, screenh, "raymarcher");
+	bool full = false;
+#ifdef FINALBUILD
+	full = true;
+#endif
+	OpenGL context(screenw, screenh, "raymarcher", full);
 	
 	// load a font to draw text with -- any system font or local .ttf file should work
+	Font nicefont(L"Georgia");
 	Font font(L"Consolas");
 
 	// shader variables; could also initialize them here, but it's often a good idea to
@@ -414,6 +423,10 @@ int main() {
 	bool controls = true;
 	std::deque<double> frameTimes;
 	auto lastFrameTime = std::chrono::high_resolution_clock::now();
+
+#ifdef FINALBUILD
+	controls = false;
+#endif
 
 	while (loop()) // loop() stops if esc pressed or window closed
 	{
@@ -809,7 +822,7 @@ int main() {
                 atomicAdd(sampleWeights[idx + screenSize.x], (uint(weight_scale * weight * ws[2]) << 14) | uint(255 * ws[2]));
                 atomicAdd(sampleWeights[idx + screenSize.x + 1], (uint(weight_scale * weight * ws[3]) << 14) | uint(255 * ws[3]));
 
-				atomicAdd(pointsSplatted, 1); // TODO DEBUG HACK REMOVE!
+				//atomicAdd(pointsSplatted, 1); // TODO DEBUG HACK REMOVE!
 			}
 			));
 		}
@@ -1167,6 +1180,28 @@ int main() {
 			font.drawText(interactive ? L"Interactive pose" : L"Cam track pose", 200.f, 55.f, 15.f);
 			font.drawText(L"dt: " + std::to_wstring(dt) + L" s", 200.f, 70.f, 15.f);
 			font.drawText(std::to_wstring(1./dt) + L" Hz", 400.f, 70.f, 15.f);
+		}
+
+
+		if (secs >= music.getDuration() - 0.1) {
+			glClear(GL_COLOR_BUFFER_BIT);
+			#ifdef FINALBUILD 
+			if (secs >= music.getDuration()+2.) break;
+			#endif
+		}
+
+
+
+		if (secs >= 169) {
+			float x = screenw / 16.f;
+			float line = 40.f;
+			float y = screenh - x*.75 - line * 4;
+			float sz = 32.f;
+			
+			nicefont.drawText(L"ETERNAL FORTRESS", x, y, sz);
+			nicefont.drawText(L"visuals: pekka (cce)", x, y + line, sz);
+			nicefont.drawText(L"music: miika", x, y + line * 2, sz);
+			nicefont.drawText(L"engine: pauli (msqrt)", x, y + line*3, sz);
 		}
 
 		// this actually displays the rendered image
