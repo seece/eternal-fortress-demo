@@ -4,41 +4,14 @@
 #include "cameras.h"
 #include <cinttypes>
 #include <cassert>
-
-
-double getSystemTime()
-{
-	static bool initialized;
-	static LARGE_INTEGER StartingTime;
-	static LARGE_INTEGER Frequency;
-
-	if (!initialized) {
-		QueryPerformanceFrequency(&Frequency);
-		QueryPerformanceCounter(&StartingTime);
-		initialized = true;
-	}
-
-	// Activity to be timed
-
-	LARGE_INTEGER now, ElapsedMicroseconds;
-	QueryPerformanceCounter(&now);
-	ElapsedMicroseconds.QuadPart = now.QuadPart - StartingTime.QuadPart;
-	return (double)ElapsedMicroseconds.QuadPart / 1000000.;
-}
+#include <deque>
+#include <chrono>
 
 const int screenw = 1280, screenh = 720;
 constexpr int MAX_POINT_COUNT = 10. * screenw * screenh;
 static constexpr GLuint SAMPLE_BUFFER_TYPE = GL_RGBA16F;
 static constexpr GLuint JITTER_BUFFER_TYPE = GL_RG8;
 static bool showDebugInfo = false;
-
-static void cameraPath(float t, CameraPose& pose)
-{
-	float tt = t * 0.1f;
-	pose.pos = vec3(0. + 2.0 * sin(tt), -4., 7.f + 0.1f*cos(tt));
-	pose.dir = normalize(vec3(0.9f*cos(tt*0.5f), 0.3 + 0.9f*sin(tt), -1.f));
-	pose.zoom = 0.5f;
-}
 
 static void setWrapToClamp(GLuint tex) {
 	glTextureParameteri(tex, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -105,7 +78,7 @@ vec2 getRandomJitter()
 
 struct Shot {
 	// static
-	std::string name;
+	std::string camName;
 	float start = 0.f;
 	// dynamic state
 	float end =0.f;
@@ -113,6 +86,18 @@ struct Shot {
 	float relative = 0.f;
 	float ratio = 0.f;
 };
+
+static std::vector<Shot> shots;
+static std::map<std::string, Shot&> shotNames;
+static std::vector<CameraPose> cameraPoses;
+
+static CameraPose* findPose(const std::string& name) {
+	for (CameraPose& p : cameraPoses) {
+		if (p.name == name)
+			return &p;
+	}
+	return nullptr;
+}
 
 static std::vector<Shot> loadShots()
 {
@@ -128,7 +113,7 @@ static std::vector<Shot> loadShots()
 				name
 			);
 			if (num >= 2) {
-				s.name = name;
+				s.camName = name;
 				news.push_back(s);
 				printf("loaded shot %s\n", name);
 			}
@@ -137,6 +122,41 @@ static std::vector<Shot> loadShots()
 		fclose(fp);
 	}
 	return news;
+}
+
+Shot shotAtTime(float secs) {
+	Shot s = {};
+	for (int i = 0; i < shots.size() - 1; i++) {
+		if (shots[i + 1].start > secs) {
+			s = shots[i];
+			s.end = shots[i + 1].start;
+			s.length = s.end - shots[i].start;
+			s.relative = secs - shots[i].start;
+			s.ratio = s.relative / s.length;
+			return s;
+		}
+	}
+
+	return shots[shots.size() - 1];
+}
+
+static void cameraPath(const Shot& shot, CameraPose& outPose)
+{
+	CameraPose pose;
+	for (int i = 0; i < cameraPoses.size(); i++) {
+		if (cameraPoses[i].name == shot.camName) {
+			pose = cameraPoses[i];
+			break;
+		}
+		if (i == cameraPoses.size() - 1) printf("Error! No camera found: %s\n", shot.camName.c_str());
+	}
+	
+	float tt = shot.relative * 0.1f;
+	//pose.pos = vec3(0. + 2.0 * sin(tt), -4., 7.f + 0.1f*cos(tt));
+	//pose.dir = normalize(vec3(0.9f*cos(tt*0.5f), 0.3 + 0.9f*sin(tt), -1.f));
+	//pose.zoom = 0.5f;
+
+	outPose = pose;
 }
 
 int main() {
@@ -300,6 +320,7 @@ int main() {
 	int maxdim = 1 << (int(log2(max(screenw, screenh))) + 1);
 	vec2 screenBoundary(screenw / float(maxdim), screenh / float(maxdim));
 
+	// Build index array for the raymarcher
     {
 		std::vector<int> indexArray;
 
@@ -338,16 +359,30 @@ int main() {
 	Music music(L"assets/final3_fraktals.wav");
 	music.play();
 
-	std::vector<Shot> shots;
-	std::map<std::string, Shot&> shotNames;
-	std::vector<CameraPose> cameraPoses;
-	bool interactive = true;
+	bool interactive = false;
 	bool controls = true;
+	std::deque<double> frameTimes;
+	auto lastFrameTime = std::chrono::high_resolution_clock::now();
 
 	while (loop()) // loop() stops if esc pressed or window closed
 	{
 		TimeStamp start;
 		float secs = music.getTime();
+		double dt = 0.;
+		{
+			auto now = std::chrono::high_resolution_clock::now();
+			auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(now - lastFrameTime).count();
+			double dtnew = duration / 1e9;
+			//if (dtnew > 1.) dtnew = 1. / 30.;
+			if (frameTimes.size() >= 6) {
+				frameTimes.pop_front();
+			}
+			frameTimes.push_back(dtnew);
+			for (double ft : frameTimes) { dt += ft; }
+			dt /= frameTimes.size();
+			lastFrameTime = std::chrono::high_resolution_clock::now();
+		}
+
 
 		if (frame == 0 || (controls && (frame % 4 == 0))) {
 			std::vector<CameraPose> newPoses = loadPoses();
@@ -360,36 +395,24 @@ int main() {
 				shots = newShots;
 				Shot s;
 				s.start = music.getDuration();
-				s.name = "footer";
+				s.camName = "floaters";
 				shots.push_back(s);
 			}
 		}
 
-		Shot& currentShot = shots[shots.size()-1];
+		float futureInterval = dt * 2;
 
-		for (int i = 0; i < shots.size() - 1; i++) {
-			shots[i].end = shots[i + 1].start;
-			shots[i].length = shots[i].end - shots[i].start;
-			shots[i].relative = secs - shots[i].start;
-			shots[i].ratio = shots[i].relative / shots[i].length;
-		}
+		Shot futureShot = shotAtTime(secs + futureInterval);
+		Shot currentShot = shotAtTime(secs);
 
-		for (int i = 0; i < shots.size() - 1; i++) {
-			if (shots[i + 1].start > secs) {
-				currentShot = shots[i];
-				break;
-			}
-		}
-
-		float futureInterval = 0. / 60.f;
 		CameraPose pose, futurePose;
 		if (interactive) {
 			pose = cameraPoses[0];
 			futurePose = pose;
 		}
 		else {
-			cameraPath(secs, pose);
-			cameraPath(secs + futureInterval, futurePose);
+			cameraPath(currentShot, pose);
+			cameraPath(futureShot, futurePose);
 		}
 		makeCamera(futurePose, cameras[1]);
 		glNamedBufferSubData(cameraData, 0, sizeof(cameras), &cameras);
@@ -410,6 +433,7 @@ int main() {
 			if (keyHit(VK_SPACE)) music.togglePlaying();
 			if (keyHit(VK_BACK)) music.seek(0.);
 			if (keyHit(0x4D)) music.setVolume(music.getVolume() > -100. ? -100. : 0.);
+			if (keyHit(VK_RETURN)) interactive = !interactive;
 		}
 
 		float zeroFloat = 0.f;
@@ -1036,9 +1060,12 @@ int main() {
 			font.drawText(L"Music: " + std::to_wstring(music.getTime()) + L" s", 200.f, 25.f, 15.f);
 			{
 				std::wstring ws;
-				ws.assign(currentShot.name.begin(), currentShot.name.end());
-				font.drawText(L"Shot: " + ws + std::to_wstring(currentShot.relative) + L" s", 200.f, 40.f, 15.f);
+				ws.assign(currentShot.camName.begin(), currentShot.camName.end());
+				font.drawText(L"ShotCam: " + ws + L" @ " + std::to_wstring(currentShot.relative) + L" s", 200.f, 40.f, 15.f);
 			}
+			font.drawText(interactive ? L"Interactive pose" : L"Cam track pose", 200.f, 55.f, 15.f);
+			font.drawText(L"dt: " + std::to_wstring(dt) + L" s", 200.f, 70.f, 15.f);
+			font.drawText(std::to_wstring(1./dt) + L" Hz", 400.f, 70.f, 15.f);
 		}
 
 		// this actually displays the rendered image

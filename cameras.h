@@ -44,7 +44,7 @@ static std::vector<CameraPose> loadPoses()
 				phi += 3.1415926536 / 2.f;
 				p.dir = vec3(cos(theta)*sin(phi), sin(theta)*sin(phi), cos(phi));
 			}
-			if (num == 6) {
+			if (num >= 7) {
 				p.name = std::string(name);
 			}
 			if (num >= 5) {
