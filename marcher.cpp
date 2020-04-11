@@ -411,7 +411,7 @@ int main() {
 			}
 		}
 
-		float futureInterval = dt * 2;
+		float futureInterval = dt * 4;
 
 		Shot futureShot = shotAtTime(secs + futureInterval);
 		Shot currentShot = shotAtTime(secs);

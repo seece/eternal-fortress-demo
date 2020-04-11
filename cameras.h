@@ -49,7 +49,7 @@ static std::vector<CameraPose> loadPoses()
 			}
 			if (num >= 5) {
 				newPoses.push_back(p);
-				printf("loaded %s, phi: %f, theta: %f\n", name, phi, theta);
+				//printf("loaded %s, phi: %f, theta: %f\n", name, phi, theta);
 			}
 
 		}
