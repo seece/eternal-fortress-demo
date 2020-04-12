@@ -5,8 +5,8 @@
 65 ruins
 70 ug3
 77 hall2
-83 top
-94 shaft2
+86 lightwall
+92 shaft2
 102 incas
 112 facade
 131 floaters

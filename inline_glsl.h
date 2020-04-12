@@ -7,7 +7,8 @@
 #include <cctype>
 // debug
 #include <iostream>
-
+#include <cstring>
+#define __FILENAME__ (strrchr(__FILE__, '\\') ? strrchr(__FILE__, '\\') + 1 : __FILE__)
 
 namespace detail {
 	namespace {
@@ -15,9 +16,9 @@ namespace detail {
 	};
 
 	inline std::string formGlslArg(const std::string& path, const int counter, const int version, const std::string& given_source) {
-		auto index = std::to_string(counter - base), versionString = std::to_string(version), file = std::filesystem::path(path).filename().string();
+		auto index = std::to_string(counter - base), versionString = std::to_string(version), file = std::filesystem::path(path).relative_path().filename().string();
 		return path + "," + index + "," + versionString + "\n#version " + versionString + "\n" + given_source;
 	}
 }
 
-#define GLSL(version, ...) detail::formGlslArg(__FILE__, __COUNTER__, version, #__VA_ARGS__)
+#define GLSL(version, ...) detail::formGlslArg(__FILENAME__, __COUNTER__, version, #__VA_ARGS__)

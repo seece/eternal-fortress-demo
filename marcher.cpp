@@ -1,7 +1,7 @@
 
-#include "../testbench.h"
-#include "../mp3music.h"
-#include "../cameras.h"
+#include "testbench.h"
+#include "mp3music.h"
+#include "cameras.h"
 #include <cinttypes>
 #include <cassert>
 #include <deque>
@@ -1150,37 +1150,52 @@ int main() {
                         vec2 uv = vec2(gl_FragCoord.x, gl_FragCoord.y) / screenSize;
                         uv.y /= cameras[1].aspect;
                         getCameraProjection(cameras[1], uv, p, dir);
-
-                        if (sceneID == 43) { 
+                        vec3 skyColor = sampleSky(dir);
+                        if (sceneID == 0) {
+                            //color = pow(color, vec3(2.2));
+                            //color += vec3(.1);
+                            color = pow(color, vec3(0.2));
+                            color *= 0.3;
+                        } else if (sceneID == 10) {
+                            color = pow(color, vec3(0.9));
+                            //color += vec3(.01);
+                        } else if (sceneID == 43) { 
                             //color = vec3(color.r * color.g * 100.);
                             color = mix(vec3(pow(color.r*3., 1.5)), color, 0.3);
-                            color.b *= 0.6;
+                            //color.b *= 0.6;
                             color.g *= 0.8;
                             color = 1.*pow(color*2., vec3(1.1)); // inside
+                            color.rg = vec2(4., 3.2) * pow(color.rg*20., vec2(2.5));
                             //color = 2.*pow(color*10., vec3(2.0)); // inside
+                            color = min(color, vec3(3.));
                         }
                         else if (sceneID == 77) {
                             float sw = gl_FragCoord.y / screenSize.y;
                             color.r *= 0.3 + .7*sw;
                             color = pow(color*1.3, vec3(1.1));
-                        } else if (sceneID == 94) { // shaft2
+                        } else if (sceneID == 92) { // shaft2
                             color = pow(color*1.2, vec3(1.3));
                             float sw = 1. - gl_FragCoord.y / screenSize.y;
                             color.g *= mix(1., sw, 0.7);
                             color.b *= mix(1., sw, 0.8);
-                        } else if (sceneID == 83) { // top
-                            color = pow(color, vec3(2.0));
-                            color += vec3(0.01);
+                        } else if (sceneID == 86) { // top
+                            color = pow(color, vec3(1.5));
+                            //color *= pow(uv.y+0.1, 1.);
+                            //color += vec3(0.01);
 
                         } else if (sceneID == 102) { // incas
                             color.b += 20.*pow(color.b, 2.);
-                            color = pow(color, vec3(1.1));
+                            color = pow(color*1.1, vec3(1.1));
                             color *= 0.1 + pow(1.0-abs(0.5-uv.x), 3.);
+                            color.r *= 1.0 + uv.y;
+                            color.rgb = 8. * pow(color.rgb*10., vec3(2.0));
+                            //color = 2.*pow(color*10., vec3(2.0)); // inside
+                            color = min(color, vec3(3.));
                         } else if (sceneID == 140) color = 2.*pow(color*8., vec3(2.0)); // cemetry
                         else if (sceneID == 159) color = 2.*pow(color*4., vec3(1.7)); // central
                         else color = pow(color, vec3(1.2));
 
-                        vec3 skyColor = sampleSky(dir);
+                        
                         vec3 c = mix(skyColor, color, alpha);
 
 
