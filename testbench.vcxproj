@@ -129,11 +129,10 @@
   <ItemGroup>
     <ClCompile Include="gl_helpers.cpp" />
     <ClCompile Include="loadgl\loadgl46.cpp" />
-    <ClCompile Include="main.cpp" />
+    <ClCompile Include="marcher.cpp" />
     <ClCompile Include="math_helpers.cpp" />
     <ClCompile Include="mp3music.cpp" />
     <ClCompile Include="program.cpp" />
-    <ClCompile Include="shaders\marcher.cpp" />
     <ClCompile Include="text_renderer.cpp" />
     <ClCompile Include="window.cpp" />
   </ItemGroup>
