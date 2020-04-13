@@ -388,32 +388,32 @@ int main() {
 	vec2 screenBoundary(screenw / float(maxdim), screenh / float(maxdim));
 
 	// Build index array for the raymarcher
-    {
+	{
 		std::vector<int> indexArray;
 
-        vec2 scale = (float(maxdim) / float(screenw), float(maxdim) / float(screenw));
+		vec2 scale = (float(maxdim) / float(screenw), float(maxdim) / float(screenw));
 		float aspect = float(screenw) / float(screenh);
 
-        for (int i = 0; i < jumpBufferMaxElements; i++) {
-            int b = tobin(i);
-            int start = binto(b);
-            int z = i - start;
-            uvec2 coord = z2xy(uint(z));
-            int idim = 1 << b;
-            int size = idim * idim;
-            float dim = float(idim);
+		for (int i = 0; i < jumpBufferMaxElements; i++) {
+			int b = tobin(i);
+			int start = binto(b);
+			int z = i - start;
+			uvec2 coord = z2xy(uint(z));
+			int idim = 1 << b;
+			int size = idim * idim;
+			float dim = float(idim);
 
-            vec2 uv = vec2(0.5/dim) + vec2(coord) / vec2(dim);
+			vec2 uv = vec2(0.5/dim) + vec2(coord) / vec2(dim);
 			//float margin = 0.5f / dim; // no effect?
 			float margin = 0.f;
 			if ( uv.x <= screenBoundary.x + margin && uv.y <= screenBoundary.y + margin) {
 				indexArray.push_back(i);
 			}
-        }
+		}
 		rayIndexBufferMaxElements = indexArray.size();
 		printf("rayIndexBuffer elements: %d\n", rayIndexBufferMaxElements);
 		glNamedBufferStorage(rayIndexBuffer, indexArray.size() * sizeof(int), indexArray.data(), 0);
-    }
+	}
 
 	glNamedBufferStorage(jumpbuffer, jumpBufferMaxElements * sizeof(float), NULL, 0);
 	glNamedBufferStorage(radiusbuffer, jumpBufferMaxElements * sizeof(float), NULL, 0);
@@ -466,7 +466,7 @@ int main() {
 		}
 
 		float futureInterval = dt * 4;
-        double futureSecs = secs + futureInterval;
+		double futureSecs = secs + futureInterval;
 
 		Shot futureShot = shotAtTime(secs + futureInterval);
 		Shot currentShot = shotAtTime(secs);
@@ -546,8 +546,8 @@ int main() {
 		vec2 cameraJitter = getRandomJitter() / float(max(screenw, screenh));
 
 		glUniform1i("frame", frame);
-        glUniform1f("secs", futureSecs);
-        glUniform1f("sceneID", futureShot.start);
+		glUniform1f("secs", futureSecs);
+		glUniform1f("sceneID", futureShot.start);
 		glUniform2i("screenSize", screenw, screenh);
 		glUniform2f("screenBoundary", screenBoundary.x, screenBoundary.y);
 		glUniform2f("cameraJitter", cameraJitter.x, cameraJitter.y);
@@ -632,45 +632,45 @@ int main() {
 				float padding3;
 			};
 
-            struct RgbPoint {
-                vec3 xyz;
-                uint normalSpecularSun;
-                vec3 rgba;
-                float sec;
-            };
+			struct RgbPoint {
+				vec3 xyz;
+				uint normalSpecularSun;
+				vec3 rgba;
+				float sec;
+			};
 
-            vec3 decodeNormal( vec2 f )
-            {
-                f = f * 2.0 - vec2(1.0);
+			vec3 decodeNormal( vec2 f )
+			{
+				f = f * 2.0 - vec2(1.0);
 
-                // https://twitter.com/Stubbesaurus/status/937994790553227264
-                vec3 n = vec3( f.x, f.y, 1.0 - abs( f.x ) - abs( f.y ) );
-                float t = clamp( -n.z, 0., 1. );
-                //n.xy += n.xy >= 0.0 ? -t : t;
-                n.xy += mix(vec2(t), vec2(-t), greaterThanEqual(n.xy, vec2(0.)));
-                //n.x += n.x >= 0.0 ? -t : t;
-                //n.y += n.y >= 0.0 ? -t : t;
-                return normalize( n );
-            }
+				// https://twitter.com/Stubbesaurus/status/937994790553227264
+				vec3 n = vec3( f.x, f.y, 1.0 - abs( f.x ) - abs( f.y ) );
+				float t = clamp( -n.z, 0., 1. );
+				//n.xy += n.xy >= 0.0 ? -t : t;
+				n.xy += mix(vec2(t), vec2(-t), greaterThanEqual(n.xy, vec2(0.)));
+				//n.x += n.x >= 0.0 ? -t : t;
+				//n.y += n.y >= 0.0 ? -t : t;
+				return normalize( n );
+			}
 
 			layout(r8) uniform image2D edgebuffer;
 			uniform int pointBufferMaxElements;
 			uniform int numberOfPointsToSplat;
 			uniform ivec2 screenSize;
 			uniform ivec3 noiseOffset;
-            uniform vec3 sunDirection;
-            uniform vec3 sunColor;
-            uniform vec3 fogColor;
-            uniform vec3 fogScatterColor;
-            uniform float currentShotStart;
-            uniform samplerCube skybox;
+			uniform vec3 sunDirection;
+			uniform vec3 sunColor;
+			uniform vec3 fogColor;
+			uniform vec3 fogScatterColor;
+			uniform float currentShotStart;
+			uniform samplerCube skybox;
 			uniform sampler2DArray noiseTextures;
 
-            vec3 getNoise(ivec2 coord, int ofs = 0)
-            {
-                return texelFetch(noiseTextures,
-                        ivec3((coord.x + noiseOffset.x) % 64, (coord.y + noiseOffset.y) % 64, (noiseOffset.z + ofs) % 64), 0).rgb;
-            }
+			vec3 getNoise(ivec2 coord, int ofs = 0)
+			{
+				return texelFetch(noiseTextures,
+						ivec3((coord.x + noiseOffset.x) % 64, (coord.y + noiseOffset.y) % 64, (noiseOffset.z + ofs) % 64), 0).rgb;
+			}
 
 			layout(std140) uniform cameraArray {
 				CameraParams cameras[2];
@@ -698,11 +698,11 @@ int main() {
 
 			vec3 projectPoint(CameraParams cam, vec3 p, out vec3 fromCamToPoint) {
 				vec3 op = p - cam.pos;
-                fromCamToPoint = op;
+				fromCamToPoint = op;
 				float n = length(cam.dir);
 				float z = dot(cam.dir, op) / n;
 				vec3 pp = (op * n) / z;
-                vec3 up = cam.up / cam.aspect;
+				vec3 up = cam.up / cam.aspect;
 				vec2 plane = vec2(
 					dot(pp, cam.right) / dot(cam.right, cam.right),
 					dot(pp, up) / dot(up, up)
@@ -710,47 +710,47 @@ int main() {
 				return vec3(plane + vec2(0.5, 0.5 * cam.aspect), z);
 			}
 
-            // https://software.intel.com/en-us/node/503873
-            vec3 RGB_YCoCg(vec3 c)
-            {
-                return vec3(
-                        c.x / 4.0 + c.y / 2.0 + c.z / 4.0,
-                        c.x / 2.0 - c.z / 2.0,
-                        -c.x / 4.0 + c.y / 2.0 - c.z / 4.0
-                        );
-            }
-
-            int sampleNum = 0;
-
-			void addRGB(uint pixelIdx, vec3 c, ivec2 pix) {
-                vec3 scale = vec3(1000.);
-                //c += (vec3(0.5)/scale)*(getNoise(pix, sampleNum++) - vec3(.55));
-                c = max(vec3(0.), c) * scale;
-                uint redblue = ((uint(c.b) << 16) & 0xffff0000) | (uint(c.r) & 0xffff);
-                uint green = uint(c.g) & 0xffff;
-                atomicAdd(colors[pixelIdx*2],   redblue);
-                atomicAdd(colors[pixelIdx*2+1], green);
+			// https://software.intel.com/en-us/node/503873
+			vec3 RGB_YCoCg(vec3 c)
+			{
+				return vec3(
+						c.x / 4.0 + c.y / 2.0 + c.z / 4.0,
+						c.x / 2.0 - c.z / 2.0,
+						-c.x / 4.0 + c.y / 2.0 - c.z / 4.0
+						);
 			}
 
-            vec3 applyFog( in vec3  rgb,      // original color of the pixel
-                    in float distance, // camera to point distance
-                    in vec3  rayOri,   // camera position
-                    in vec3  rayDir )  // camera to point vector
-            {
-                float b = 0.05;
-                float c = 1.0;
-                float h = 25.;
-                rayOri.y *= -1;
-                float dy = -rayDir.y;
-                float fogAmount = c * exp(-(rayOri.y + h)*b) * (1.0-exp( -distance*dy*b ))/dy;
-                fogAmount = clamp(fogAmount, 0., 1.);
-                float scatter = pow(max(0., dot(rayDir, sunDirection)), 10.);
-                //vec3  fogColor = mix(vec3(0.5,0.5,0.7), vec3(1., 0.5, 0.1), scatter);
-                //vec3  fogColor = mix(vec3(0.5,0.5,0.7), vec3(1., 0.5, 0.1), scatter);
-                vec3  col = mix(fogColor, fogScatterColor, scatter);
+			int sampleNum = 0;
 
-                return mix( rgb, col, fogAmount );
-            }
+			void addRGB(uint pixelIdx, vec3 c, ivec2 pix) {
+				vec3 scale = vec3(1000.);
+				//c += (vec3(0.5)/scale)*(getNoise(pix, sampleNum++) - vec3(.55));
+				c = max(vec3(0.), c) * scale;
+				uint redblue = ((uint(c.b) << 16) & 0xffff0000) | (uint(c.r) & 0xffff);
+				uint green = uint(c.g) & 0xffff;
+				atomicAdd(colors[pixelIdx*2],   redblue);
+				atomicAdd(colors[pixelIdx*2+1], green);
+			}
+
+			vec3 applyFog( in vec3  rgb,      // original color of the pixel
+					in float distance, // camera to point distance
+					in vec3  rayOri,   // camera position
+					in vec3  rayDir )  // camera to point vector
+			{
+				float b = 0.05;
+				float c = 1.0;
+				float h = 25.;
+				rayOri.y *= -1;
+				float dy = -rayDir.y;
+				float fogAmount = c * exp(-(rayOri.y + h)*b) * (1.0-exp( -distance*dy*b ))/dy;
+				fogAmount = clamp(fogAmount, 0., 1.);
+				float scatter = pow(max(0., dot(rayDir, sunDirection)), 10.);
+				//vec3  fogColor = mix(vec3(0.5,0.5,0.7), vec3(1., 0.5, 0.1), scatter);
+				//vec3  fogColor = mix(vec3(0.5,0.5,0.7), vec3(1., 0.5, 0.1), scatter);
+				vec3  col = mix(fogColor, fogScatterColor, scatter);
+
+				return mix( rgb, col, fogAmount );
+			}
 
 			void main()
 			{
@@ -779,7 +779,7 @@ int main() {
 				if (pos == vec3(0.) || points[index].sec != currentShotStart)
 					return;
 
-                vec3 fromCamToPoint;
+				vec3 fromCamToPoint;
 				vec3 camSpace = projectPoint(cameras[1], pos, fromCamToPoint);
 				vec2 screenSpace = camSpace.xy * vec2(screenSize.x, screenSize.y);
 
@@ -789,25 +789,25 @@ int main() {
 				if (x < 0 || y < 0 || x >= screenSize.x || y >= screenSize.y)
 					return;
 
-                vec4 normalSpecularSun = unpackUnorm4x8(points[index].normalSpecularSun);
-                vec3 normal = decodeNormal(normalSpecularSun.xy);
-                float materialShininess = normalSpecularSun.z;
-                float sun = normalSpecularSun.w;
+				vec4 normalSpecularSun = unpackUnorm4x8(points[index].normalSpecularSun);
+				vec3 normal = decodeNormal(normalSpecularSun.xy);
+				float materialShininess = normalSpecularSun.z;
+				float sun = normalSpecularSun.w;
 
 				int pixelIdx = screenSize.x * y + x;
 				bool isEdge = imageLoad(edgebuffer, ivec2(x, y)).x > 0;
 
-                vec3 toCamera = normalize(-fromCamToPoint);
-                vec3 H = normalize(sunDirection + toCamera);
-                float specular = 10. * pow(max(0., dot(normal, H)), 50.);
-                c = mix(c, (specular * sunColor * c) * c, materialShininess);
+				vec3 toCamera = normalize(-fromCamToPoint);
+				vec3 H = normalize(sunDirection + toCamera);
+				float specular = 10. * pow(max(0., dot(normal, H)), 50.);
+				c = mix(c, (specular * sunColor * c) * c, materialShininess);
 
 				float distance = length(fromCamToPoint);
 
-                c = applyFog( c,      // original color of the pixel
-                    distance, // camera to point distance
-                    cameras[1].pos,   // camera position
-                    -toCamera);  // camera to point vector
+				c = applyFog( c,      // original color of the pixel
+					distance, // camera to point distance
+					cameras[1].pos,   // camera position
+					-toCamera);  // camera to point vector
 
 
 				c = c / (vec3(1.) + c);
@@ -815,29 +815,29 @@ int main() {
 
 				//float weight = max(0.1, min(1e3, 1. / (pow(camSpace.z / 3., 2.) + 0.001)));
 				float weight = max(0.1, min(1e1, 1. / (pow(camSpace.z / 3., 2.) + 0.001)));
-                const int weight_scale = 500;
+				const int weight_scale = 500;
 
-                vec2 w = fract(screenSpace);
-                vec4 ws = vec4(
-                        (1. - w.x) * (1. - w.y),
-                        w.x * (1. - w.y),
-                        (1. - w.x) * w.y,
-                        w.x * w.y
-                        );
+				vec2 w = fract(screenSpace);
+				vec4 ws = vec4(
+						(1. - w.x) * (1. - w.y),
+						w.x * (1. - w.y),
+						(1. - w.x) * w.y,
+						w.x * w.y
+						);
 
-                int idx = screenSize.x * int(screenSpace.y) + int(screenSpace.x);
+				int idx = screenSize.x * int(screenSpace.y) + int(screenSpace.x);
 
-                // FIXME: don't write over image boundaries
-                vec3 col = weight * c;
-                addRGB(idx,                     ws[0] * col, ivec2(x, y));
-                addRGB(idx + 1,                 ws[1] * col, ivec2(x+1, y));
-                addRGB(idx + screenSize.x,      ws[2] * col, ivec2(x, y+1));
-                addRGB(idx + screenSize.x + 1,  ws[3] * col, ivec2(x+1, y+1));
+				// FIXME: don't write over image boundaries
+				vec3 col = weight * c;
+				addRGB(idx,                     ws[0] * col, ivec2(x, y));
+				addRGB(idx + 1,                 ws[1] * col, ivec2(x+1, y));
+				addRGB(idx + screenSize.x,      ws[2] * col, ivec2(x, y+1));
+				addRGB(idx + screenSize.x + 1,  ws[3] * col, ivec2(x+1, y+1));
 
-                atomicAdd(sampleWeights[idx], (uint(weight_scale * weight * ws[0]) << 14) | uint(255 * ws[0]));
-                atomicAdd(sampleWeights[idx + 1], (uint(weight_scale * weight * ws[1]) << 14) | uint(255 * ws[1]));
-                atomicAdd(sampleWeights[idx + screenSize.x], (uint(weight_scale * weight * ws[2]) << 14) | uint(255 * ws[2]));
-                atomicAdd(sampleWeights[idx + screenSize.x + 1], (uint(weight_scale * weight * ws[3]) << 14) | uint(255 * ws[3]));
+				atomicAdd(sampleWeights[idx], (uint(weight_scale * weight * ws[0]) << 14) | uint(255 * ws[0]));
+				atomicAdd(sampleWeights[idx + 1], (uint(weight_scale * weight * ws[1]) << 14) | uint(255 * ws[1]));
+				atomicAdd(sampleWeights[idx + screenSize.x], (uint(weight_scale * weight * ws[2]) << 14) | uint(255 * ws[2]));
+				atomicAdd(sampleWeights[idx + screenSize.x + 1], (uint(weight_scale * weight * ws[3]) << 14) | uint(255 * ws[3]));
 
 				atomicAdd(pointsSplatted, 1);
 			}
@@ -866,7 +866,7 @@ int main() {
 		glUniform3f("sunColor", sunColor.x, sunColor.y, sunColor.z);
 		glUniform3f("fogColor", fogColor.x, fogColor.y, fogColor.z);
 		glUniform3f("fogScatterColor", fogScatterColor.x, fogScatterColor.y, fogScatterColor.z);
-        glUniform1f("currentShotStart", currentShot.start);
+		glUniform1f("currentShotStart", currentShot.start);
 		bindBuffer("cameraArray", cameraData);
 		glDispatchCompute(numberOfPointsToSplat / 128 / 1, 1, 1);
 
@@ -886,8 +886,8 @@ int main() {
 			float parentDepth;
 			float parent_t;
 			float child_t;
-            float nearPlane;
-            float projPlaneDist;
+			float nearPlane;
+			float projPlaneDist;
 			float parentUVx;
 			float parentUVy;
 			float childUVx;
@@ -1006,19 +1006,19 @@ int main() {
 					layout(rgba16f) uniform image2D resolved;
 					layout(std430) buffer jumpBuffer { float jumps[]; };
 					layout(std430) buffer radiusBuffer { float radiuses[]; };
-                    layout(std430) buffer uvBuffer { vec2 debug_uvs[]; };
+					layout(std430) buffer uvBuffer { vec2 debug_uvs[]; };
 
 					out vec4 outColor;
 					uniform ivec2 screenSize;
 					uniform int frame;
 					uniform ivec3 noiseOffset;
 					uniform sampler2DArray noiseTextures;
-                    uniform samplerCube skybox;
-                    uniform vec3 sunDirection;
-                    uniform vec3 sunColor;
-                    uniform vec3 fogColor;
-                    uniform vec3 fogScatterColor;
-                    uniform int sceneID;
+					uniform samplerCube skybox;
+					uniform vec3 sunDirection;
+					uniform vec3 sunColor;
+					uniform vec3 fogColor;
+					uniform vec3 fogScatterColor;
+					uniform int sceneID;
 
 					// https://gamedev.stackexchange.com/a/148088
 					vec3 linearToSRGB(vec3 linearRGB)
@@ -1041,130 +1041,130 @@ int main() {
 							ivec3((coord.x + noiseOffset.x) % 64, (coord.y + noiseOffset.y) % 64, (noiseOffset.z + ofs) % 64), 0).rgb;
 					}
 
-                    // https://learnopengl.com/PBR/IBL/Diffuse-irradiance
-                    const vec2 invAtan = vec2(0.1591, 0.3183);
-                    vec2 dirToSpherical(vec3 direction)
-                    {
-                        vec2 uv = vec2(atan(direction.z, direction.x), asin(direction.y));
-                        uv *= invAtan;
-                        uv += 0.5;
-                        return uv;
-                    }
+					// https://learnopengl.com/PBR/IBL/Diffuse-irradiance
+					const vec2 invAtan = vec2(0.1591, 0.3183);
+					vec2 dirToSpherical(vec3 direction)
+					{
+						vec2 uv = vec2(atan(direction.z, direction.x), asin(direction.y));
+						uv *= invAtan;
+						uv += 0.5;
+						return uv;
+					}
 
-                    vec3 applyFog( in vec3  rgb,      // original color of the pixel
-                            in float distance, // camera to point distance
-                            in vec3  rayOri,   // camera position
-                            in vec3  rayDir )  // camera to point vector
-                    {
-                        float scatter = pow(max(0., dot(rayDir, sunDirection)), 10.);
-                        vec3  col = mix(fogColor, fogScatterColor, scatter);
+					vec3 applyFog( in vec3  rgb,      // original color of the pixel
+							in float distance, // camera to point distance
+							in vec3  rayOri,   // camera position
+							in vec3  rayDir )  // camera to point vector
+					{
+						float scatter = pow(max(0., dot(rayDir, sunDirection)), 10.);
+						vec3  col = mix(fogColor, fogScatterColor, scatter);
 
-                        return col;
-                    }
+						return col;
+					}
 
-                    vec3 sampleSky(vec3 dir) {
-                        if (length(fogColor) < 0.1)
-                            return vec3(0.);
-                        vec3 c = texture(skybox, dir).rgb;
-                        c = 3.*pow(c, vec3(1.5));
+					vec3 sampleSky(vec3 dir) {
+						if (length(fogColor) < 0.1)
+							return vec3(0.);
+						vec3 c = texture(skybox, dir).rgb;
+						c = 3.*pow(c, vec3(1.5));
 
-                        float scatter = pow(max(0., dot(dir, sunDirection)), 10.);
-                        vec3 fog = mix(fogColor, fogScatterColor, scatter);
+						float scatter = pow(max(0., dot(dir, sunDirection)), 10.);
+						vec3 fog = mix(fogColor, fogScatterColor, scatter);
 
-                        float d = dot(dir, sunDirection);
-                        float ground = pow(max(0., 1.*dir.y), 10.);
-                        float sky = min(1., max(0., pow(-min(0., dir.y-0.7), 4.)));
-                        float horizon = pow(1-abs(dir.y+0.2), 20.);
+						float d = dot(dir, sunDirection);
+						float ground = pow(max(0., 1.*dir.y), 10.);
+						float sky = min(1., max(0., pow(-min(0., dir.y-0.7), 4.)));
+						float horizon = pow(1-abs(dir.y+0.2), 20.);
 
-                        vec3 bg = c.bgr;
-                        return (sky) * bg + (1.-sky)*fog; 
-                    }
+						vec3 bg = c.bgr;
+						return (sky) * bg + (1.-sky)*fog; 
+					}
 
-                    void main() {
-                        int pixelIdx = screenSize.x * int(gl_FragCoord.y) + int(gl_FragCoord.x);
-                        uvec3 icolor = uvec3(
-                                colors[3 * pixelIdx + 0],
-                                colors[3 * pixelIdx + 1],
-                                colors[3 * pixelIdx + 2]
-                                );
+					void main() {
+						int pixelIdx = screenSize.x * int(gl_FragCoord.y) + int(gl_FragCoord.x);
+						uvec3 icolor = uvec3(
+								colors[3 * pixelIdx + 0],
+								colors[3 * pixelIdx + 1],
+								colors[3 * pixelIdx + 2]
+								);
 
-                        uint weightAlphaPacked = sampleWeights[pixelIdx];
-                        uint fixedWeight = weightAlphaPacked >> 14;
-                        uint fixedAlpha = weightAlphaPacked & 0x3fff;
-                        float weight = float(fixedWeight) / 500.;
-                        float alpha = float(fixedAlpha) / 255.;
-                        alpha += weight*.1;
+						uint weightAlphaPacked = sampleWeights[pixelIdx];
+						uint fixedWeight = weightAlphaPacked >> 14;
+						uint fixedAlpha = weightAlphaPacked & 0x3fff;
+						float weight = float(fixedWeight) / 500.;
+						float alpha = float(fixedAlpha) / 255.;
+						alpha += weight*.1;
 
-                        if (sceneID == 0) {
-                            alpha = pow(min(1., alpha/2), 0.5);
-                        } else {
-                            alpha = pow(min(1., alpha/3), 0.1);
-                        }
+						if (sceneID == 0) {
+							alpha = pow(min(1., alpha/2), 0.5);
+						} else {
+							alpha = pow(min(1., alpha/3), 0.1);
+						}
 
-                        uint packedColor1 = colors[pixelIdx*2];
-                        uint packedColor2 = colors[pixelIdx*2+1];
-                        vec3 color = vec3(
-                                packedColor1 & 0xffff,
-                                packedColor2 & 0xffff,
-                                (packedColor1 & 0xffff0000) >> 16);
-                        color /= vec3(1000.);
+						uint packedColor1 = colors[pixelIdx*2];
+						uint packedColor2 = colors[pixelIdx*2+1];
+						vec3 color = vec3(
+								packedColor1 & 0xffff,
+								packedColor2 & 0xffff,
+								(packedColor1 & 0xffff0000) >> 16);
+						color /= vec3(1000.);
 
-                        // "color" is now Reinhard tone mapped
+						// "color" is now Reinhard tone mapped
 
-                        if (weight > 0.) {
-                            color /= weight;
-                        } else {
-                            color = vec3(0.);
-                        }
+						if (weight > 0.) {
+							color /= weight;
+						} else {
+							color = vec3(0.);
+						}
 
-                        vec3 p, dir;
-                        vec2 uv = vec2(gl_FragCoord.x, gl_FragCoord.y) / screenSize;
-                        uv.y /= cameras[1].aspect;
-                        getCameraProjection(cameras[1], uv, p, dir);
-                        vec3 skyColor = sampleSky(dir);
-                        if (sceneID == 0) {
-                            color = pow(color, vec3(0.2));
-                            color *= 0.3;
-                        } else if (sceneID == 10) {
-                            color = pow(color, vec3(0.9));
-                        } else if (sceneID == 43) { 
-                            color = mix(vec3(pow(color.r*3., 1.5)), color, 0.3);
-                            color.g *= 0.8;
-                            color = 1.*pow(color*2., vec3(1.1)); // inside
-                            color.rg = vec2(4., 3.2) * pow(color.rg*20., vec2(2.5));
-                            color = min(color, vec3(3.));
-                        }
-                        else if (sceneID == 77) {
-                            float sw = gl_FragCoord.y / screenSize.y;
-                            color.r *= 0.3 + .7*sw;
-                            color = pow(color*1.3, vec3(1.1));
-                        } else if (sceneID == 92) { // shaft2
-                            color = pow(color*1.2, vec3(1.3));
-                            float sw = 1. - gl_FragCoord.y / screenSize.y;
-                            color.g *= mix(1., sw, 0.7);
-                            color.b *= mix(1., sw, 0.8);
-                        } else if (sceneID == 86) { // top
-                            color = pow(color, vec3(1.5));
-                        } else if (sceneID == 102) { // incas
-                            color.b += 20.*pow(color.b, 2.);
-                            color = pow(color*1.1, vec3(1.1));
-                            color *= 0.1 + pow(1.0-abs(0.5-uv.x), 3.);
-                            color.r *= 1.0 + uv.y;
-                            color.rgb = 8. * pow(color.rgb*10., vec3(2.0));
-                            //color = 2.*pow(color*10., vec3(2.0)); // inside
-                            color = min(color, vec3(3.));
-                        } else if (sceneID == 140) color = 2.*pow(color*8., vec3(2.0)); // cemetry
-                        else if (sceneID == 159) color = 2.*pow(color*4., vec3(1.7)); // central
-                        else color = pow(color, vec3(1.2));
+						vec3 p, dir;
+						vec2 uv = vec2(gl_FragCoord.x, gl_FragCoord.y) / screenSize;
+						uv.y /= cameras[1].aspect;
+						getCameraProjection(cameras[1], uv, p, dir);
+						vec3 skyColor = sampleSky(dir);
+						if (sceneID == 0) {
+							color = pow(color, vec3(0.2));
+							color *= 0.3;
+						} else if (sceneID == 10) {
+							color = pow(color, vec3(0.9));
+						} else if (sceneID == 43) { 
+							color = mix(vec3(pow(color.r*3., 1.5)), color, 0.3);
+							color.g *= 0.8;
+							color = 1.*pow(color*2., vec3(1.1)); // inside
+							color.rg = vec2(4., 3.2) * pow(color.rg*20., vec2(2.5));
+							color = min(color, vec3(3.));
+						}
+						else if (sceneID == 77) {
+							float sw = gl_FragCoord.y / screenSize.y;
+							color.r *= 0.3 + .7*sw;
+							color = pow(color*1.3, vec3(1.1));
+						} else if (sceneID == 92) { // shaft2
+							color = pow(color*1.2, vec3(1.3));
+							float sw = 1. - gl_FragCoord.y / screenSize.y;
+							color.g *= mix(1., sw, 0.7);
+							color.b *= mix(1., sw, 0.8);
+						} else if (sceneID == 86) { // top
+							color = pow(color, vec3(1.5));
+						} else if (sceneID == 102) { // incas
+							color.b += 20.*pow(color.b, 2.);
+							color = pow(color*1.1, vec3(1.1));
+							color *= 0.1 + pow(1.0-abs(0.5-uv.x), 3.);
+							color.r *= 1.0 + uv.y;
+							color.rgb = 8. * pow(color.rgb*10., vec3(2.0));
+							//color = 2.*pow(color*10., vec3(2.0)); // inside
+							color = min(color, vec3(3.));
+						} else if (sceneID == 140) color = 2.*pow(color*8., vec3(2.0)); // cemetry
+						else if (sceneID == 159) color = 2.*pow(color*4., vec3(1.7)); // central
+						else color = pow(color, vec3(1.2));
 
-                        vec3 c = mix(skyColor, color, alpha);
-                        imageStore(resolved, ivec2(gl_FragCoord.xy), vec4(c, 1.));
+						vec3 c = mix(skyColor, color, alpha);
+						imageStore(resolved, ivec2(gl_FragCoord.xy), vec4(c, 1.));
 
-                        // Clear the accumulation buffer
-                        colors[pixelIdx*2] = 0;
-                        colors[pixelIdx*2+1] = 0;
-                        sampleWeights[pixelIdx] = 0;
-                    }
+						// Clear the accumulation buffer
+						colors[pixelIdx*2] = 0;
+						colors[pixelIdx*2+1] = 0;
+						sampleWeights[pixelIdx] = 0;
+					}
 				)
 			);
 
@@ -1209,20 +1209,20 @@ int main() {
 			layout(rgba16f) uniform image2D outputImage;
 
 			void main() {
-                //float weights[] = {0.000229, 0.005977, 0.060598, 0.241732, 0.382928, 0.241732, 0.060598, 0.005977, 0.000229};
-                float weights[] = {0.035822, 0.05879, 0.086425, 0.113806, 0.13424, 0.141836, 0.13424, 0.113806, 0.086425, 0.05879, 0.035822};
-                ivec2 base = ivec2(gl_FragCoord.xy);
-                vec3 c = vec3(0.);
-                float sum = 0.;
-                for (int i=0;i<weights.length;i++) {
-                    ivec2 ofs = ivec2(i - weights.length/2, 0);
-                    if (dir == 1) ofs = ofs.yx;
-                    float w = weights[i];
+				//float weights[] = {0.000229, 0.005977, 0.060598, 0.241732, 0.382928, 0.241732, 0.060598, 0.005977, 0.000229};
+				float weights[] = {0.035822, 0.05879, 0.086425, 0.113806, 0.13424, 0.141836, 0.13424, 0.113806, 0.086425, 0.05879, 0.035822};
+				ivec2 base = ivec2(gl_FragCoord.xy);
+				vec3 c = vec3(0.);
+				float sum = 0.;
+				for (int i=0;i<weights.length;i++) {
+					ivec2 ofs = ivec2(i - weights.length/2, 0);
+					if (dir == 1) ofs = ofs.yx;
+					float w = weights[i];
 				    vec3 s = texelFetch(inputTexture, base+ofs, 0).rgb;
-                    c += w * s;
-                    sum += w;
-                }
-                c /= sum;
+					c += w * s;
+					sum += w;
+				}
+				c /= sum;
 				imageStore(outputImage, ivec2(gl_FragCoord.xy), vec4(c, 1.));
 			}
 			));
@@ -1271,8 +1271,8 @@ int main() {
 				),
 				"", "", "",
 					GLSL(460,
-                uniform sampler2DArray noiseTextures;
-                uniform ivec3 noiseOffset;
+				uniform sampler2DArray noiseTextures;
+				uniform ivec3 noiseOffset;
 
 					out vec4 outColor;
 					uniform ivec2 screenSize;
@@ -1280,7 +1280,7 @@ int main() {
 					uniform sampler2D bloom;
 					uniform float secs;
 					uniform int sceneID;
-                    //
+					//
 					// https://gamedev.stackexchange.com/a/148088
 					vec3 linearToSRGB(vec3 linearRGB)
 					{
@@ -1291,24 +1291,24 @@ int main() {
 						return mix(higher, lower, cutoff);
 					}
 
-            vec3 getNoise(ivec2 coord, int ofs = 0)
-            {
-                return texelFetch(noiseTextures,
-                        ivec3((coord.x + noiseOffset.x) % 64, (coord.y + noiseOffset.y) % 64, (noiseOffset.z + ofs) % 64), 0).rgb;
-            }
+			vec3 getNoise(ivec2 coord, int ofs = 0)
+			{
+				return texelFetch(noiseTextures,
+						ivec3((coord.x + noiseOffset.x) % 64, (coord.y + noiseOffset.y) % 64, (noiseOffset.z + ofs) % 64), 0).rgb;
+			}
 
-                    void main() {
+					void main() {
 						vec3 c = texelFetch(resolved, ivec2(gl_FragCoord.xy), 0).rgb;
 						vec3 add = texelFetch(bloom, ivec2(gl_FragCoord.xy), 0).rgb;
-                        c += .10 * pow(add, vec3(1.2));
+						c += .10 * pow(add, vec3(1.2));
 
-                        vec3 srgb = linearToSRGB(c.rgb);
-                        vec3 noise = 1./255. * (vec3(-.3) + .5*getNoise(ivec2(gl_FragCoord.xy), 1));
-                        srgb += noise;
+						vec3 srgb = linearToSRGB(c.rgb);
+						vec3 noise = 1./255. * (vec3(-.3) + .5*getNoise(ivec2(gl_FragCoord.xy), 1));
+						srgb += noise;
 
-                        outColor = vec4(srgb,1.);
-                    }
-                    ));
+						outColor = vec4(srgb,1.);
+					}
+					));
 
 		glUseProgram(present);
 
