@@ -182,9 +182,6 @@ static void cameraPath(const Shot& shot, CameraPose& outPose)
 	pose.pos += t * move.axis;
 	pose.pos += t * pose.dir * move.forward;
 	float tt = t * 0.1f;
-	//pose.pos = vec3(0. + 2.0 * sin(tt), -4., 7.f + 0.1f*cos(tt));
-	//pose.dir = normalize(vec3(0.9f*cos(tt*0.5f), 0.3 + 0.9f*sin(tt), -1.f));
-	//pose.zoom = 0.5f;
 
 	pose.dir += move.shake * 0.01f*vec3(
 		pow(cos(tuniq*0.8), 3.0f),
@@ -802,24 +799,16 @@ int main() {
 
                 vec3 toCamera = normalize(-fromCamToPoint);
                 vec3 H = normalize(sunDirection + toCamera);
-                vec3 R = reflect(normal, toCamera);
-                //vec3 specularColor = texture(skybox, R, -100).rgb;
                 float specular = 10. * pow(max(0., dot(normal, H)), 50.);
-                //c = mix(c, (specular * specularColor * sunColor) * c, materialShininess);
                 c = mix(c, (specular * sunColor * c) * c, materialShininess);
-                //c = vec3(specular * sun);
 
 				float distance = length(fromCamToPoint);
-				//float fog = pow(min(1., distance / 10.), 1.0);
-				//c = mix(c, vec3(0.1, 0.1, 0.2)*0.1, fog);
 
                 c = applyFog( c,      // original color of the pixel
                     distance, // camera to point distance
                     cameras[1].pos,   // camera position
                     -toCamera);  // camera to point vector
 
-
-                //c = vec3(.5) + .5*sin(pos*1.4);
 
 				c = c / (vec3(1.) + c);
 				c = clamp(c, vec3(0.), vec3(1.));
@@ -850,7 +839,7 @@ int main() {
                 atomicAdd(sampleWeights[idx + screenSize.x], (uint(weight_scale * weight * ws[2]) << 14) | uint(255 * ws[2]));
                 atomicAdd(sampleWeights[idx + screenSize.x + 1], (uint(weight_scale * weight * ws[3]) << 14) | uint(255 * ws[3]));
 
-				atomicAdd(pointsSplatted, 1); // TODO DEBUG HACK REMOVE!
+				atomicAdd(pointsSplatted, 1);
 			}
 			));
 		}
@@ -958,16 +947,14 @@ int main() {
 
 				int parent_size = size >> 2; 
 				int parent = int(start - parent_size) + (z / 4);
-
 				
-					int pb = tobin(parent);
-					int pstart = binto(pb);
-					int pz = parent - pstart;
-					uvec2 pcoord = z2xy(uint(pz));
-					int pdim = 1 << pb;
-					int psize = pdim * pdim;
+				int pb = tobin(parent);
+				int pstart = binto(pb);
+				int pz = parent - pstart;
+				uvec2 pcoord = z2xy(uint(pz));
+				int pdim = 1 << pb;
+				int psize = pdim * pdim;
 
-				// printf("coord: (%u, %u) of %dx%d, pcoord: (%u, %u)\n", coord.x, coord.y, dim, dim, pcoord.x, pcoord.y);
 				assert(coord.x / 2 == pcoord.x);
 				assert(coord.y / 2 == pcoord.y);
 
@@ -1069,17 +1056,10 @@ int main() {
                             in vec3  rayOri,   // camera position
                             in vec3  rayDir )  // camera to point vector
                     {
-                        //float b = 0.05;
-                        //float c = 1.0;
-                        //float h = 25.;
-                        //rayOri.y *= -1;
-                        //float dy = -rayDir.y;
-                        //float fogAmount = c * exp(-(rayOri.y + h)*b) * (1.0-exp( -distance*dy*b ))/dy;
-                        //fogAmount = clamp(fogAmount, 0., 1.);
                         float scatter = pow(max(0., dot(rayDir, sunDirection)), 10.);
                         vec3  col = mix(fogColor, fogScatterColor, scatter);
 
-                        return col; //mix( rgb, col, fogAmount );
+                        return col;
                     }
 
                     vec3 sampleSky(vec3 dir) {
@@ -1092,24 +1072,12 @@ int main() {
                         vec3 fog = mix(fogColor, fogScatterColor, scatter);
 
                         float d = dot(dir, sunDirection);
-                        /*
-                        float horizon = dir.y;
-                        vec3 base = max(0., horizon) * vec3(0., 0.01, 0.03)
-                                    + max(0., -horizon) * .1 * vec3(0.6, 0.0, 1.0)
-                                    + max(0., pow(1.-abs(horizon), 16.)) * vec3(0.1, 0.00, 0.)
-                                    ;
-                        float disc = 50. * pow(max(0., (d)), 1000.);
-                        float shine =  pow(max(0., d*.8), 20.);
-                        //return vec3(disc);
-                        //return c * (base + vec3(disc) + shine * sunColor);
-                        */
                         float ground = pow(max(0., 1.*dir.y), 10.);
                         float sky = min(1., max(0., pow(-min(0., dir.y-0.7), 4.)));
                         float horizon = pow(1-abs(dir.y+0.2), 20.);
-                        //return mix(c.bgr, 0.005*vec3(0.3, 0.3, 0.5), ground);
-                        //return mix(vec3(0., 1., 0.), c.bgr, sky);
+
                         vec3 bg = c.bgr;
-                        return (sky) * bg + (1.-sky)*fog; //mix(fog, bg, sky);
+                        return (sky) * bg + (1.-sky)*fog; 
                     }
 
                     void main() {
@@ -1127,7 +1095,6 @@ int main() {
                         float alpha = float(fixedAlpha) / 255.;
                         alpha += weight*.1;
 
-                        //alpha = pow(min(1., alpha/2), 0.5);
                         if (sceneID == 0) {
                             alpha = pow(min(1., alpha/2), 0.5);
                         } else {
@@ -1141,7 +1108,6 @@ int main() {
                                 packedColor2 & 0xffff,
                                 (packedColor1 & 0xffff0000) >> 16);
                         color /= vec3(1000.);
-                        //color = pow(color, vec3(1./0.7));
 
                         // "color" is now Reinhard tone mapped
 
@@ -1151,30 +1117,21 @@ int main() {
                             color = vec3(0.);
                         }
 
-                        //if (weight < 4.) color=vec3(1., 0., 0.);
-                        //color = vec3(weight>10.);
-
                         vec3 p, dir;
                         vec2 uv = vec2(gl_FragCoord.x, gl_FragCoord.y) / screenSize;
                         uv.y /= cameras[1].aspect;
                         getCameraProjection(cameras[1], uv, p, dir);
                         vec3 skyColor = sampleSky(dir);
                         if (sceneID == 0) {
-                            //color = pow(color, vec3(2.2));
-                            //color += vec3(.1);
                             color = pow(color, vec3(0.2));
                             color *= 0.3;
                         } else if (sceneID == 10) {
                             color = pow(color, vec3(0.9));
-                            //color += vec3(.01);
                         } else if (sceneID == 43) { 
-                            //color = vec3(color.r * color.g * 100.);
                             color = mix(vec3(pow(color.r*3., 1.5)), color, 0.3);
-                            //color.b *= 0.6;
                             color.g *= 0.8;
                             color = 1.*pow(color*2., vec3(1.1)); // inside
                             color.rg = vec2(4., 3.2) * pow(color.rg*20., vec2(2.5));
-                            //color = 2.*pow(color*10., vec3(2.0)); // inside
                             color = min(color, vec3(3.));
                         }
                         else if (sceneID == 77) {
@@ -1188,9 +1145,6 @@ int main() {
                             color.b *= mix(1., sw, 0.8);
                         } else if (sceneID == 86) { // top
                             color = pow(color, vec3(1.5));
-                            //color *= pow(uv.y+0.1, 1.);
-                            //color += vec3(0.01);
-
                         } else if (sceneID == 102) { // incas
                             color.b += 20.*pow(color.b, 2.);
                             color = pow(color*1.1, vec3(1.1));
@@ -1203,11 +1157,7 @@ int main() {
                         else if (sceneID == 159) color = 2.*pow(color*4., vec3(1.7)); // central
                         else color = pow(color, vec3(1.2));
 
-                        
                         vec3 c = mix(skyColor, color, alpha);
-
-
-                        //outColor = vec4(srgb, 1.); // TODO move conversion to present
                         imageStore(resolved, ivec2(gl_FragCoord.xy), vec4(c, 1.));
 
                         // Clear the accumulation buffer
@@ -1259,7 +1209,6 @@ int main() {
 			layout(rgba16f) uniform image2D outputImage;
 
 			void main() {
-				//vec3 c = texelFetch(inputTexture, ivec2(gl_FragCoord.xy), 0).rgb;
                 //float weights[] = {0.000229, 0.005977, 0.060598, 0.241732, 0.382928, 0.241732, 0.060598, 0.005977, 0.000229};
                 float weights[] = {0.035822, 0.05879, 0.086425, 0.113806, 0.13424, 0.141836, 0.13424, 0.113806, 0.086425, 0.05879, 0.035822};
                 ivec2 base = ivec2(gl_FragCoord.xy);
@@ -1270,10 +1219,6 @@ int main() {
                     if (dir == 1) ofs = ofs.yx;
                     float w = weights[i];
 				    vec3 s = texelFetch(inputTexture, base+ofs, 0).rgb;
-                    //s = max(vec3(0.), s - vec3(0.05));
-                    //s = pow(s, vec3(2.));
-                    //s += .5 * vec3(max(s.g, max(s.r, s.g)));
-                    //vec3 s = vec3(0.);
                     c += w * s;
                     sum += w;
                 }
@@ -1355,10 +1300,7 @@ int main() {
                     void main() {
 						vec3 c = texelFetch(resolved, ivec2(gl_FragCoord.xy), 0).rgb;
 						vec3 add = texelFetch(bloom, ivec2(gl_FragCoord.xy), 0).rgb;
-                        //add = add / (vec3(1.) + add);
-                        //add = max(vec3(0.), add - vec3(0.01));
                         c += .10 * pow(add, vec3(1.2));
-                        //c += add;
 
                         vec3 srgb = linearToSRGB(c.rgb);
                         vec3 noise = 1./255. * (vec3(-.3) + .5*getNoise(ivec2(gl_FragCoord.xy), 1));
@@ -1410,8 +1352,6 @@ int main() {
 			break;
 			#endif
 		}
-
-
 
 		if (secs >= 169) {
 			float x = screenw / 16.f;

@@ -209,20 +209,6 @@ float depth_march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int
         float d = scene(ro + t * rd, mat);
         float coneWorldRadius = PIXEL_RADIUS * (t+PROJECTION_PLANE_DIST) / PROJECTION_PLANE_DIST;
 
-        if (globalMyIdx == PARENT_INDEX) {
-            debug_steps[4*i] = t;
-            debug_steps[4*i + 1] = d;
-            debug_steps[4*i + 2] = coneWorldRadius;
-            debug_steps[4*i + 3] = PIXEL_RADIUS;
-        }
-
-        if (globalMyIdx == CHILD_INDEX) {
-            debug_steps[1000*4 + 4*i] = t;
-            debug_steps[1000*4 + 4*i + 1] = d;
-            debug_steps[1000*4 + 4*i + 2] = coneWorldRadius;
-            debug_steps[1000*4 + 4*i + 3] = PIXEL_RADIUS;
-        }
-
         if (d <= coneWorldRadius) {
             // In depth rays we write the earlier, "safe", z value to the buffer.
             t = last_t;
@@ -248,15 +234,6 @@ float depth_march(inout vec3 p, vec3 rd, out int material, out vec2 restart, int
         material = MATERIAL_SKY;
         t = MAX_DISTANCE;
     }
-
-    if (globalMyIdx == PARENT_INDEX) {
-        debug_parent_t = t;
-    }
-
-    if (globalMyIdx == CHILD_INDEX) {
-        debug_child_t = t;
-    }
-
 
     return t;
 }
@@ -464,11 +441,6 @@ uvec2 i2gridCoord(int i, out int idim) {
 
 vec2 octWrap( vec2 v )
 {
-    //return ( 1.0 - abs( v.yx ) ) * ( v.xy >= 0.0 ? 1.0 : -1.0 );
-
-    //vec2 v2 = vec2(
-    //    v.x >= 0. ? 1. : -1.,
-    //    v.y >= 0. ? 1. : -1.);
     vec2 v2 = mix(vec2(-1.), vec2(1.), greaterThanEqual(v.xy, vec2(0.)));
     return ( 1.0 - abs( v.yx ) ) * v2;
 }
@@ -476,11 +448,6 @@ vec2 octWrap( vec2 v )
 vec2 encodeNormal( vec3 n )
 {
     n /= ( abs( n.x ) + abs( n.y ) + abs( n.z ) );
-    //n.xy = n.z >= 0.0 ? n.xy : OctWrap( n.xy );
-    // vec2 nw = OctWrap( n.xy );
-    // n.x = n.z >= 0.0 ? n.x : nw.x;
-    // n.y = n.z >= 0.0 ? n.y : nw.y;
-
     n.xy = mix(octWrap( n.xy ), n.xy, bvec2(n.z >= 0.));
     n.xy = n.xy * 0.5 + vec2(0.5);
     return n.xy;
@@ -493,10 +460,7 @@ vec3 decodeNormal( vec2 f )
     // https://twitter.com/Stubbesaurus/status/937994790553227264
     vec3 n = vec3( f.x, f.y, 1.0 - abs( f.x ) - abs( f.y ) );
     float t = clamp( -n.z, 0., 1. );
-    //n.xy += n.xy >= 0.0 ? -t : t;
     n.xy += mix(vec2(t), vec2(-t), greaterThanEqual(n.xy, vec2(0.)));
-    //n.x += n.x >= 0.0 ? -t : t;
-    //n.y += n.y >= 0.0 ? -t : t;
     return normalize( n );
 }
 
@@ -515,8 +479,6 @@ vec3 sampleSky(vec3 dir) {
     vec3 skyColor = vec3(0., 0.2*abs(dir.y), 0.5 - dir.y);
     return img.bgr;
 }
-
-
 
 vec2 i2ray(int i, out ivec2 squareCoord, out int parentIdx, out int sideLength)
 {
@@ -563,7 +525,6 @@ void main() {
         if (arrayIdx >= rayIndexBufferMaxElements)
             return;
         int myIdx = rayIndices[arrayIdx];
-        //int myIdx = arrayIdx;
         globalMyIdx = myIdx;
         int idim;
         int parentIdx = -2, sideLength = -1;
@@ -594,20 +555,9 @@ void main() {
 
         vec2 uv = squareUV;
 
-        /*
-        if (any(greaterThan(uv, vec2(1.0)))) {
-            continue;
-        }
-
-        // Allow sampling half a pixel outside the screen
-        if (any(lessThan(uv, vec2(-0.5/res.x, -0.5/res.y)))) {
-            continue;
-        }
-        */
-
 #if USE_TREE
         float parentDepth = jumps[parentIdx];
-        //parentDepth = 0.; // HACK!!!
+        //parentDepth = 0.; // Setting this forces child rays to always start from the beginning.
         if (parentDepth >= MAX_DISTANCE) {
             jumps[myIdx] = parentDepth;
             continue;
@@ -670,9 +620,6 @@ void main() {
 #if USE_TREE
         jumps[myIdx] = zdepth;
 #endif
-        //radiuses[myIdx] = (PIXEL_RADIUS / (2.* length(cam.right)));
-        radiuses[myIdx] = PIXEL_RADIUS;
-        debug_uvs[myIdx] = uv;
 
         if (!isLowestLevel) {
             continue;
@@ -687,13 +634,11 @@ void main() {
             vec3 roughNormal = evalnormal_rough(p);
             vec3 to_camera = normalize(cam.pos - p);
             vec3 to_light = sunDirection;
-            //to_light = normalize(vec3(-0.4, 1., 0.0));
 
             vec3 shadowRayPos = p + to_camera * 1e-4;
             const float maxShadowDist = 30.;
             vec2 shadowResult = shadowMarch(shadowRayPos, to_light, 200, 9e-2, 5e-3, maxShadowDist);
             float sun = min(shadowResult.x, maxShadowDist) / maxShadowDist;
-            //sun = pow(shadowResult.y-0.1, 3.0);
 
             sun = pow(sun, 2.);
             sun *= 4.;
@@ -706,29 +651,14 @@ void main() {
             vec3 base = vec3(.5) + .5*vec3(sin(hitmat + vec3(0., .5, 1.)));
             float shininess = mod(hitmat * 0.2 + 0.5, 1.0);
             base = pow(base, vec3(1.3));
-            //shininess = pow(shininess, 1.);
-            if (hitmat == 2) {
-                //shininess = 1.0;
-            }
             vec3 suncol = sunColor;
 
-            //color = base * sun * vec3(facing);
-            //vec3 skycolor = mix(vec3(1.), fogColor, .8) * sampleSky(roughNormal);
             vec3 skycolor = sampleSky(roughNormal);
             if (suncol.g > suncol.r) {
                 skycolor = suncol * 0.5;
             }
             color = base * (ambient * skycolor + facing * sun * suncol);
-            //color=vec3(ambient);
             color = clamp(color, vec3(0.), vec3(2.));
-            //shininess = 1.;
-
-            //shininess = 0.;
-            //color *= 0.5;
-            //color *= 0.;
-
-            //color = vec3(sun);
-            //color = vec3(0.5)+.5*cos( 10*vec3(iters)/600.  + vec3(0., 0.5, 1.));
 
             int myPointOffset = atomicAdd(currentWriteOffset, 1);
             myPointOffset %= pointBufferMaxElements;
@@ -741,18 +671,11 @@ void main() {
             points[myPointOffset].sec = sceneID;
         }
 
-        //color = vec3(uv, pow(zdepth/10., 5.));
-        //color = vec3(1.);
-
-
         imageStore(zbuffer, pixelCoord, vec4(zdepth));
         if (zdepth >= MAX_DISTANCE) {
             for (int y=-1;y<=1;y++) {
                 for (int x=-1;x<=1;x++) {
-                    //float old = imageLoad(edgebuffer, pixelCoord + ivec2(x, y)).x;
-                    //imageStore(edgebuffer, pixelCoord + ivec2(x, y), vec4(old+1./10.));
                     imageStore(edgebuffer, pixelCoord + ivec2(x, y), vec4(1));
-                    //imageAtomicAdd(edgebuffer, pixelCoord + ivec2(x, y), 1.);
                 }
             }
         }
