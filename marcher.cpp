@@ -522,6 +522,12 @@ int main() {
 				music.seek(currentShot.start);
 			}
 		}
+		if (keyHit(VK_F1)) {
+			controls = !controls;
+		}
+		if (keyHit(VK_F3)) {
+			showDebugInfo = !showDebugInfo;
+		}
 
 		float zeroFloat = 0.f;
 		glClearNamedBufferData(jumpbuffer, GL_R32F, GL_RED, GL_FLOAT, &zeroFloat);
@@ -610,6 +616,8 @@ int main() {
 		bindBuffer("pointBufferHeader", pointBufferHeader);
 		glDispatchCompute(1, 1, 1);
 		glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+		TimeStamp headerUpdateTime;
 
 		if (!pointSplat) {
 			pointSplat = createProgram(
@@ -842,7 +850,7 @@ int main() {
                 atomicAdd(sampleWeights[idx + screenSize.x], (uint(weight_scale * weight * ws[2]) << 14) | uint(255 * ws[2]));
                 atomicAdd(sampleWeights[idx + screenSize.x + 1], (uint(weight_scale * weight * ws[3]) << 14) | uint(255 * ws[3]));
 
-				//atomicAdd(pointsSplatted, 1); // TODO DEBUG HACK REMOVE!
+				atomicAdd(pointsSplatted, 1); // TODO DEBUG HACK REMOVE!
 			}
 			));
 		}
@@ -914,7 +922,7 @@ int main() {
 			glGetNamedBufferSubData(pointBufferHeader, 0, 8, data);
 			//printf("currentWriteOffset: %d\n", data[0]);
 			pointsSplatted = data[1];
-			//printf("pointsSplatted: %d\t(%.3f million)\n", data[1], data[1]/1000000.);
+			printf("pointsSplatted: %d\t(%.3f million)\n", data[1], data[1]/1000000.);
 		}
 		if (false) {
 			GLint64 size = -1;
@@ -1380,9 +1388,9 @@ int main() {
 			// print the timing (word of warning; this forces a cpu-gpu synchronization)
 			font.drawText(L"Total: " + std::to_wstring(end - start), 10.f, 10.f, 15.f); // text, x, y, font size
 			font.drawText(L"Draw: " + std::to_wstring(drawTime - start), 10.f, 25.f, 15.f);
-			font.drawText(L"Splat: " + std::to_wstring(splatTime - drawTime), 10.f, 40.f, 15.f);
+			font.drawText(L"Splat: " + std::to_wstring(splatTime - headerUpdateTime), 10.f, 40.f, 15.f);
 			font.drawText(L"PostProc: " + std::to_wstring(end - splatTime), 10.f, 55.f, 15.f);
-			font.drawText(L"Points: " + std::to_wstring(pointsSplatted / 1000. / 1000.) + L" M", 200.f, 10.f, 15.f);
+			//font.drawText(L"Points: " + std::to_wstring(pointsSplatted / 1000. / 1000.) + L" M", 100.f, 10.f, 15.f);
 			font.drawText(L"Music: " + std::to_wstring(music.getTime()) + L" s", 200.f, 25.f, 15.f);
 			{
 				std::wstring ws, ws2;
