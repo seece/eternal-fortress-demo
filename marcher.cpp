@@ -7,14 +7,14 @@
 #include <deque>
 #include <chrono>
 
-#define FINALBUILD 1
+#define FINALBUILD
 
 #ifdef FINALBUILD 
-const int screenw = 1920, screenh = 1080;
+int screenw = 1920, screenh = 1080;
 #else
-const int screenw = 1280, screenh = 720;
+int screenw = 1280, screenh = 720;
 #endif
-constexpr int MAX_POINT_COUNT = 10. * screenw * screenh;
+int MAX_POINT_COUNT = 10. * screenw * screenh;
 static constexpr GLuint SAMPLE_BUFFER_TYPE = GL_RGBA16F;
 static constexpr GLuint JITTER_BUFFER_TYPE = GL_RG8;
 static bool showDebugInfo = false;
@@ -212,7 +212,14 @@ static void reloadAnimations(Music& music)
 	}
 }
 
-int main() {
+int main(int argc, char** argv) {
+
+	if (argc == 3) {
+		screenw = atoi(argv[1]);
+		screenh = atoi(argv[2]);
+	}
+
+	printf("Using resolution %dx%d\n", screenw, screenh);
 
 	// create window and context. can also do fullscreen and non-visible window for compute only
 	bool full = false;
