@@ -328,6 +328,7 @@ int main(int argc, char** argv) {
 	Buffer cameraData;
 	Buffer pointBufferHeader;
 	Buffer pointBuffer;
+	Buffer pointPosShotBuffer, pointColorBuffer, pointShadingBuffer;
 	Buffer colorBuffer, sampleWeightBuffer;
 	Buffer jumpbuffer;
 	Buffer uvbuffer;
@@ -363,6 +364,10 @@ int main(int argc, char** argv) {
 	glNamedBufferStorage(cameraData, sizeof(cameras), NULL, GL_DYNAMIC_STORAGE_BIT);
 	glNamedBufferStorage(pointBufferHeader, 3 * sizeof(int), NULL, GL_DYNAMIC_STORAGE_BIT); // TODO read bit only for debugging
 	glNamedBufferStorage(pointBuffer, sizeof(RgbPoint) * MAX_POINT_COUNT, NULL, GL_DYNAMIC_STORAGE_BIT); // TODO read bit only for debugging
+	// Buffer pointPosShotBuffer, pointColorBuffer, pointNormalBuffer, pointSpecularBuffer, pointSunBuffer;
+	glNamedBufferStorage(pointPosShotBuffer, 4 * sizeof(float) * MAX_POINT_COUNT, NULL, 0);
+	glNamedBufferStorage(pointColorBuffer, 4 * sizeof(float) * MAX_POINT_COUNT, NULL, 0);
+	glNamedBufferStorage(pointShadingBuffer, 1 * sizeof(unsigned int) * MAX_POINT_COUNT, NULL, 0);
 	glNamedBufferStorage(colorBuffer, screenw * screenh * 3 * sizeof(int), NULL, 0);
 	glNamedBufferStorage(sampleWeightBuffer, screenw * screenh * sizeof(int), NULL, 0);
 	glNamedBufferStorage(debugBuffer, 1024 * sizeof(int), NULL, 0);
@@ -374,6 +379,7 @@ int main(int argc, char** argv) {
 	glClearNamedBufferData(debugBuffer, GL_R32I, GL_RED_INTEGER, GL_INT, &zero);
 	float minusone = -1.f;
 	glClearNamedBufferData(stepBuffer, GL_R32F, GL_RED, GL_FLOAT, &minusone);
+	glClearNamedBufferData(pointPosShotBuffer, GL_R32F, GL_RED, GL_FLOAT, &minusone);
 
 	int thousand = 1000;
 	int hundred = 100;
@@ -568,6 +574,9 @@ int main(int argc, char** argv) {
 		bindBuffer("cameraArray", cameraData);
 		bindBuffer("pointBufferHeader", pointBufferHeader);
 		bindBuffer("pointBuffer", pointBuffer);
+		bindBuffer("pointPosShotBuffer", pointPosShotBuffer);
+		bindBuffer("pointColorBuffer", pointColorBuffer);
+		bindBuffer("pointShadingBuffer", pointShadingBuffer);
 		bindBuffer("jumpBuffer", jumpbuffer);
 		bindBuffer("rayIndexBuffer", rayIndexBuffer);
 		bindBuffer("uvBuffer", uvbuffer);
@@ -693,6 +702,18 @@ int main(int argc, char** argv) {
 				RgbPoint points[];
 			};
 
+            layout (std430) buffer pointPosShotBuffer {
+                vec4 pointPosShots[];
+            };
+
+            layout (std430) buffer pointColorBuffer {
+                vec4 pointColors[];
+            };
+
+            layout (std430) buffer pointShadingBuffer {
+                uint pointNormalShininessSun[]; // NOTE: 16-bit normal, shininess, sun light
+            };
+
 			layout(std430) buffer colorBuffer {
 				uint colors[];
 			};
@@ -759,6 +780,8 @@ int main(int argc, char** argv) {
 				return mix( rgb, col, fogAmount );
 			}
 
+            #define SOA_LAYOUT 1
+
 			void main()
 			{
 				unsigned int invocationIdx =
@@ -778,13 +801,24 @@ int main(int argc, char** argv) {
 				};
 
 				unsigned int index = (baseIdx + invocationIdx) % pointBufferMaxElements;
+                #if SOA_LAYOUT
+				vec3 pos = pointPosShots[index].xyz;
+                float pointShot = pointPosShots[index].w;
+                #else
 				vec3 pos = points[index].xyz;
-				vec3 color = points[index].rgba;
-				vec3 c = color.rgb;
+                float pointShot = points[index].sec;
+                #endif
 
 				// Raymarcher never produces pure (0, 0, 0) hits.
-				if (pos == vec3(0.) || points[index].sec != currentShotStart)
+				if (pos == vec3(0.) || pointShot != currentShotStart)
 					return;
+
+                #if SOA_LAYOUT
+				vec3 color = pointColors[index].rgb;
+                #else
+				vec3 color = points[index].rgba;
+                #endif
+				vec3 c = color.rgb;
 
 				vec3 fromCamToPoint;
 				vec3 camSpace = projectPoint(cameras[1], pos, fromCamToPoint);
@@ -796,7 +830,11 @@ int main(int argc, char** argv) {
 				if (x < 0 || y < 0 || x >= screenSize.x || y >= screenSize.y)
 					return;
 
+                #if SOA_LAYOUT
+				vec4 normalSpecularSun = unpackUnorm4x8(pointNormalShininessSun[index]);
+                #else
 				vec4 normalSpecularSun = unpackUnorm4x8(points[index].normalSpecularSun);
+                #endif
 				vec3 normal = decodeNormal(normalSpecularSun.xy);
 				float materialShininess = normalSpecularSun.z;
 				float sun = normalSpecularSun.w;
@@ -864,6 +902,9 @@ int main(int argc, char** argv) {
 		glUniform2i("screenSize", screenw, screenh);
 		bindBuffer("pointBufferHeader", pointBufferHeader);
 		bindBuffer("pointBuffer", pointBuffer);
+		bindBuffer("pointPosShotBuffer", pointPosShotBuffer);
+		bindBuffer("pointColorBuffer", pointColorBuffer);
+		bindBuffer("pointShadingBuffer", pointShadingBuffer);
 		bindImage("edgebuffer", 0, edgebuffer, GL_READ_ONLY, GL_R8);
 		bindBuffer("colorBuffer", colorBuffer);
 		bindBuffer("sampleWeightBuffer", sampleWeightBuffer);
@@ -881,29 +922,29 @@ int main(int argc, char** argv) {
 
 		TimeStamp splatTime;
 
-		struct DebugData {
-			int i;
-			int parent;
-			int size;
-			int b;
-			int start;
-			int parent_size;
-			float pixelRadius;
-			float zdepth;
-			float parentDepth;
-			float parent_t;
-			float child_t;
-			float nearPlane;
-			float projPlaneDist;
-			float parentUVx;
-			float parentUVy;
-			float childUVx;
-			float childUVy;
-		};
-		DebugData debugData = {};
-		glGetNamedBufferSubData(debugBuffer, 0, sizeof(DebugData), &debugData);
+		if (showDebugInfo) {
+			struct DebugData {
+				int i;
+				int parent;
+				int size;
+				int b;
+				int start;
+				int parent_size;
+				float pixelRadius;
+				float zdepth;
+				float parentDepth;
+				float parent_t;
+				float child_t;
+				float nearPlane;
+				float projPlaneDist;
+				float parentUVx;
+				float parentUVy;
+				float childUVx;
+				float childUVy;
+			};
+			DebugData debugData = {};
+			glGetNamedBufferSubData(debugBuffer, 0, sizeof(DebugData), &debugData);
 
-		if (false) {
 			printf("debugData: i: %d, parent: %d, size: %d, b: %d, start: %d, parent_size: %d,\nradius: %f, zdepth: %f, parentDepth: %f\n",
 				debugData.i, debugData.parent, debugData.size, debugData.b, debugData.start,
 				debugData.parent_size,
@@ -911,32 +952,32 @@ int main(int argc, char** argv) {
 			printf("nearPlane: %f, projPlaneDist: %f\n", debugData.nearPlane, debugData.projPlaneDist);
 			printf("parent UV: (%f, %f), child UV: (%f, %f)\n",
 				debugData.parentUVx, debugData.parentUVy, debugData.childUVx, debugData.childUVy);
-		}
 
-		if (showDebugInfo) {
+
 			int data[2];
 			glGetNamedBufferSubData(pointBufferHeader, 0, 8, data);
 			//printf("currentWriteOffset: %d\n", data[0]);
 			pointsSplatted = data[1];
-			printf("pointsSplatted: %d\t(%.3f million)\n", data[1], data[1]/1000000.);
-		}
-		if (false) {
-			GLint64 size = -1;
-			glGetNamedBufferParameteri64v(stepBuffer, GL_BUFFER_SIZE, &size);
-			std::vector<float> steps(size/sizeof(float), -1.f);
-			glGetNamedBufferSubData(stepBuffer, 0, steps.size(), steps.data());
-			int i = 0;
-			while (steps[4*i] != -1.f) {
-				printf("parent step [%d], t=%f\td=%f, cone: %f, pix: %f\n", i, steps[4*i], steps[4*i+1], steps[4 * i + 2], steps[4 * i + 3]);
-				i++;
-			}
-			i = 1000;
-			while (steps[4*i] != -1.f) {
-				printf("child step [%d], t=%f\td=%f, cone: %f, pix: %f\n", i, steps[4 * i], steps[4 * i + 1], steps[4 * i + 2], steps[4 * i + 3]);
-				i++;
-			}
+			printf("pointsSplatted: %d\t(%.3f million)\n", data[1], data[1] / 1000000.);
 
-			printf("parent vs child final t: %f vs %f\n", debugData.parent_t, debugData.child_t);
+			if (false) {
+				GLint64 size = -1;
+				glGetNamedBufferParameteri64v(stepBuffer, GL_BUFFER_SIZE, &size);
+				std::vector<float> steps(size / sizeof(float), -1.f);
+				glGetNamedBufferSubData(stepBuffer, 0, steps.size(), steps.data());
+				int i = 0;
+				while (steps[4 * i] != -1.f) {
+					printf("parent step [%d], t=%f\td=%f, cone: %f, pix: %f\n", i, steps[4 * i], steps[4 * i + 1], steps[4 * i + 2], steps[4 * i + 3]);
+					i++;
+				}
+				i = 1000;
+				while (steps[4 * i] != -1.f) {
+					printf("child step [%d], t=%f\td=%f, cone: %f, pix: %f\n", i, steps[4 * i], steps[4 * i + 1], steps[4 * i + 2], steps[4 * i + 3]);
+					i++;
+				}
+
+				printf("parent vs child final t: %f vs %f\n", debugData.parent_t, debugData.child_t);
+			}
 		}
 
 		if (false) {
@@ -1089,11 +1130,6 @@ int main(int argc, char** argv) {
 
 					void main() {
 						int pixelIdx = screenSize.x * int(gl_FragCoord.y) + int(gl_FragCoord.x);
-						uvec3 icolor = uvec3(
-								colors[3 * pixelIdx + 0],
-								colors[3 * pixelIdx + 1],
-								colors[3 * pixelIdx + 2]
-								);
 
 						uint weightAlphaPacked = sampleWeights[pixelIdx];
 						uint fixedWeight = weightAlphaPacked >> 14;

@@ -80,6 +80,18 @@ layout(std430) buffer pointBuffer {
     RgbPoint points[];
 };
 
+layout (std430) buffer pointPosShotBuffer {
+    vec4 pointPosShots[];
+};
+
+layout (std430) buffer pointColorBuffer {
+    vec4 pointColors[];
+};
+
+layout (std430) buffer pointShadingBuffer {
+    uint pointNormalShininessSun[]; // NOTE: 16-bit normal, shininess, sun light
+};
+
 layout(std430) buffer jumpBuffer {
     float jumps[];
 };
@@ -123,6 +135,7 @@ layout(std430) buffer stepBuffer {
 #define USE_ANALYTIC_CONE_STEP 1
 #define USE_HIT_REFINEMENT 0
 #define USE_TREE 1
+#define SOA_LAYOUT 1
 
 // This factor how many pixel radiuses of screen space error do we allow
 // in the "near geometry snapping" at the end of "march" loop. Without it
@@ -665,10 +678,17 @@ void main() {
 
             vec2 packedNormal = encodeNormal(roughNormal);
 
+            #if SOA_LAYOUT
+            pointPosShots[myPointOffset] = vec4(p, sceneID);
+            pointColors[myPointOffset] = vec4(color, 1.);
+            pointNormalShininessSun[myPointOffset] = packUnorm4x8(vec4(packedNormal, shininess, sun));
+            #else
             points[myPointOffset].xyz = p;
-            points[myPointOffset].normalSpecularSun = packUnorm4x8(vec4(packedNormal, shininess, sun));
             points[myPointOffset].rgba = vec3(color);
+            points[myPointOffset].normalSpecularSun = packUnorm4x8(vec4(packedNormal, shininess, sun));
             points[myPointOffset].sec = sceneID;
+            #endif
+
         }
 
         imageStore(zbuffer, pixelCoord, vec4(zdepth));
